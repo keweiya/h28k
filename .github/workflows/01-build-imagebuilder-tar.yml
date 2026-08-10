@@ -1,0 +1,228 @@
+name: 01 - 编译 ImageBuilder 归档包
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '选择 ImmortalWrt 构建版本'
+        required: true
+        type: choice
+        default: '24.10.6'
+        options:
+          - 'latest'
+          - '25.12.1'
+          - '25.12.0'
+          - '24.10.6'
+          - '24.10.5'
+          - '24.10.4'
+          - '24.10.3'
+          - '24.10.2'
+          - '24.10.1'
+          - '24.10.0'
+      target_profile:
+        description: '指定构建的目标设备 Profile 名称'
+        required: true
+        default: 'your-device-profile'
+      use_cache:
+        description: '是否启用 GitHub Actions 源码与编译缓存'
+        required: true
+        default: true
+        type: boolean
+      overwrite_release:
+        description: '若该版本的 Release 已存在，是否强制覆盖附件'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-imagebuilder-${{ github.event.inputs.version }}-${{ github.event.inputs.target_profile }}
+  cancel-in-progress: false
+
+jobs:
+  build-tar:
+    name: 编译 ImageBuilder 压缩包
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: 检出当前支持仓库
+        uses: actions/checkout@v4
+
+      - name: 清理 Runner 磁盘空间
+        run: |
+          echo "=== 清理前的磁盘空间 ==="
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/android 2>/dev/null || true
+          sudo rm -rf /opt/ghc 2>/dev/null || true
+          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
+          sudo rm -rf /usr/local/.ghcup 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
+          sudo rm -rf /usr/local/share/chromium 2>/dev/null || true
+          sudo rm -rf /usr/share/swift 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "=== 清理后的磁盘空间 ==="
+          df -h / | tail -1
+
+      - name: 安装基础编译依赖环境
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build openssl p7zip \
+            p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd jq time
+
+      - name: 解析版本与 Git 分支标签映射
+        run: |
+          INPUT_VER="${{ github.event.inputs.version }}"
+          
+          if [ "$INPUT_VER" = "latest" ]; then
+            GIT_REF="master"
+          else
+            GIT_REF="v$INPUT_VER"
+          fi
+
+          FINAL_TAG="ib-${INPUT_VER}"
+
+          echo "GIT_REF=$GIT_REF" >> $GITHUB_ENV
+          echo "FINAL_TAG=$FINAL_TAG" >> $GITHUB_ENV
+
+      - name: 克隆 ImmortalWrt 源码 (${{ env.GIT_REF }})
+        run: |
+          git clone --branch ${{ env.GIT_REF }} --single-branch --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git source || \
+          git clone --branch openwrt-${{ github.event.inputs.version }} --single-branch --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git source || \
+          git clone --branch master --single-branch --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git source
+
+          cd source
+          COMMIT_SHA=$(git log -1 --format='%h')
+          COMMIT_MSG=$(git log -1 --format='%s')
+          COMMIT_URL="https://github.com/immortalwrt/immortalwrt/commit/$COMMIT_SHA"
+          
+          echo "UPSTREAM_HASH=$COMMIT_SHA" >> $GITHUB_ENV
+          echo "UPSTREAM_MSG=$COMMIT_MSG" >> $GITHUB_ENV
+          echo "UPSTREAM_URL=$COMMIT_URL" >> $GITHUB_ENV
+
+      - name: 应用设备 DTS 与硬件驱动补丁
+        working-directory: source
+        run: |
+          set -eu
+          if [ -d "$GITHUB_WORKSPACE/patches" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE"/patches/*.patch 2>/dev/null)" ]; then
+            for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
+              echo "=== 正在应用补丁: $(basename "$patch") ==="
+              git apply --check --3way "$patch" || {
+                echo "补丁冲突校验失败: $patch"
+                git apply --reject "$patch" || true
+                find . -name '*.rej' -print -exec cat {} \;
+                exit 1
+              }
+              git apply --3way "$patch"
+            done
+            git diff --stat
+          else
+            echo "patches/ 目录为空或未找到 .patch 文件，跳过应用补丁。"
+          fi
+
+      - name: 更新与安装 Feeds 软件源
+        working-directory: source
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 生成构建配置文件 (.config)
+        working-directory: source
+        run: |
+          echo "CONFIG_IB=y" >> .config
+          echo "CONFIG_CCACHE=y" >> .config
+          echo "CONFIG_TARGET_PROFILE=\"${{ github.event.inputs.target_profile }}\"" >> .config
+          make defconfig
+
+      - name: 恢复源码包 (dl) 缓存
+        id: source-cache
+        if: ${{ inputs.use_cache }}
+        uses: actions/cache/restore@v4
+        with:
+          path: source/dl
+          key: immortalwrt-dl-${{ runner.os }}-${{ github.event.inputs.version }}-${{ github.sha }}
+          restore-keys: |
+            immortalwrt-dl-${{ runner.os }}-${{ github.event.inputs.version }}-
+            immortalwrt-dl-${{ runner.os }}-
+
+      - name: 预下载软件包源码 (静默下载)
+        working-directory: source
+        timeout-minutes: 90
+        run: |
+          make -j"$(nproc)" download V=s
+          find dl -size -1024c -print -delete
+          du -sh dl
+
+      - name: 保存源码包 (dl) 缓存
+        if: ${{ inputs.use_cache && steps.source-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: source/dl
+          key: immortalwrt-dl-${{ runner.os }}-${{ github.event.inputs.version }}-${{ github.sha }}
+
+      - name: 编译 ImageBuilder (静默多线程，失败转单线程排错)
+        working-directory: source
+        timeout-minutes: 300
+        run: |
+          echo "=== 开始编译 ImageBuilder (时间: $(date)) ==="
+          make target/imagebuilder/compile -j"$(nproc)" 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          
+          if [ "$code" -ne 0 ]; then
+            echo "=== 多线程编译失败 (错误代码: $code)，正在自动切换单线程并打印详细日志重试 ==="
+            make target/imagebuilder/compile -j1 V=s
+          fi
+
+      - name: 收集打包产物 (.tar.zst)
+        run: |
+          mkdir -p out_ib
+          find source/bin/targets/ -name "immortalwrt-imagebuilder-*.tar.zst" -exec cp {} out_ib/ \;
+          
+          if [ -z "$(ls -A out_ib)" ]; then
+            echo "错误：未找到生成的 ImageBuilder tar.zst 压缩包！"
+            exit 1
+          fi
+
+      - name: 发布或覆盖到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.FINAL_TAG }}
+          name: "ImmortalWrt ImageBuilder - ${{ env.FINAL_TAG }} (${{ env.UPSTREAM_HASH }})"
+          overwrite: ${{ github.event.inputs.overwrite_release }}
+          body: |
+            ## 📌 ImmortalWrt ImageBuilder 预编译归档包
+
+            - **构建版本**：`${{ github.event.inputs.version }}`
+            - **Release 标签**：`${{ env.FINAL_TAG }}`
+            - **上游 Commit 节点**：[`${{ env.UPSTREAM_HASH }}`](${{ env.UPSTREAM_URL }})
+            - **Commit 说明**：`${{ env.UPSTREAM_MSG }}`
+            - **目标硬件 Profile**：`${{ github.event.inputs.target_profile }}`
+
+            > 该附件集成了 `patches/` 目录中自定义的硬件与 DTS 驱动补丁，下载解压后可用于本地或导入 Docker 进行极速固件定制。
+          files: out_ib/immortalwrt-imagebuilder-*.tar.zst
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传失败编译日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageBuilder-编译失败日志
+          path: source/build.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -7,7 +7,7 @@ on:
         description: '选择 ImmortalWrt 构建版本'
         required: true
         type: choice
-        default: '24.10.6'
+        default: 'latest'
         options:
           - 'latest'
           - '25.12.1'
@@ -19,10 +19,6 @@ on:
           - '24.10.2'
           - '24.10.1'
           - '24.10.0'
-      target_profile:
-        description: '指定构建的目标设备 Profile 名称'
-        required: true
-        default: 'your-device-profile'
       use_cache:
         description: '是否启用 GitHub Actions 源码与编译缓存'
         required: true
@@ -38,7 +34,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-imagebuilder-${{ github.event.inputs.version }}-${{ github.event.inputs.target_profile }}
+  group: build-imagebuilder-${{ github.event.inputs.version }}-h28k
   cancel-in-progress: false
 
 jobs:
@@ -92,9 +88,26 @@ jobs:
           fi
 
           FINAL_TAG="ib-${INPUT_VER}"
+          TARGET_PROFILE="hinlink_h28k"
 
           echo "GIT_REF=$GIT_REF" >> $GITHUB_ENV
           echo "FINAL_TAG=$FINAL_TAG" >> $GITHUB_ENV
+          echo "TARGET_PROFILE=$TARGET_PROFILE" >> $GITHUB_ENV
+
+      - name: 检查 Release 是否已存在
+        id: check-release
+        run: |
+          # 校验远程 Release 是否已包含该 Tag
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.FINAL_TAG }}")
+
+          if [ "$HTTP_STATUS" -eq 200 ] && [ "${{ github.event.inputs.overwrite_release }}" = "false" ]; then
+            echo "Release ${{ env.FINAL_TAG }} 已存在且未勾选覆盖，将跳过上传。"
+            echo "SKIP_UPLOAD=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_UPLOAD=false" >> $GITHUB_ENV
+          fi
 
       - name: 克隆 ImmortalWrt 源码 (${{ env.GIT_REF }})
         run: |
@@ -114,7 +127,7 @@ jobs:
           echo "UPSTREAM_MSG=$COMMIT_MSG" >> $GITHUB_ENV
           echo "UPSTREAM_URL=$COMMIT_URL" >> $GITHUB_ENV
 
-      - name: 应用设备 DTS 与硬件驱动补丁
+      - name: 应用 HINLINK H28K DTS 与驱动补丁
         working-directory: source
         run: |
           set -eu
@@ -145,7 +158,7 @@ jobs:
         run: |
           echo "CONFIG_IB=y" >> .config
           echo "CONFIG_CCACHE=y" >> .config
-          echo "CONFIG_TARGET_PROFILE=\"${{ github.event.inputs.target_profile }}\"" >> .config
+          echo "CONFIG_TARGET_PROFILE=\"${{ env.TARGET_PROFILE }}\"" >> .config
           make defconfig
 
       - name: 恢复源码包 (dl) 缓存
@@ -198,21 +211,22 @@ jobs:
           fi
 
       - name: 发布或覆盖到 GitHub Release
+        if: ${{ env.SKIP_UPLOAD == 'false' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.FINAL_TAG }}
           name: "ImmortalWrt ImageBuilder - ${{ env.FINAL_TAG }} (${{ env.UPSTREAM_HASH }})"
           overwrite: ${{ github.event.inputs.overwrite_release }}
           body: |
-            ## 📌 ImmortalWrt ImageBuilder 预编译归档包
+            ## 📌 ImmortalWrt ImageBuilder 预编译归档包 (H28K)
 
             - **构建版本**：`${{ github.event.inputs.version }}`
             - **Release 标签**：`${{ env.FINAL_TAG }}`
             - **上游 Commit 节点**：[`${{ env.UPSTREAM_HASH }}`](${{ env.UPSTREAM_URL }})
             - **Commit 说明**：`${{ env.UPSTREAM_MSG }}`
-            - **目标硬件 Profile**：`${{ github.event.inputs.target_profile }}`
+            - **设备型号**：HINLINK H28K (`${{ env.TARGET_PROFILE }}`)
 
-            > 该附件集成了 `patches/` 目录中自定义的硬件与 DTS 驱动补丁，下载解压后可用于本地或导入 Docker 进行极速固件定制。
+            > 该附件集成了 `patches/` 目录中针对 H28K 的 DTS 及硬件驱动补丁，下载解压后可用于本地或导入 Docker 进行极速固件定制。
           files: out_ib/immortalwrt-imagebuilder-*.tar.zst
           make_latest: true
         env:

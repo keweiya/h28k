@@ -1,0 +1,556 @@
+name: 构建 H28K 固件（ImageBuilder Docker）
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'ImmortalWrt 版本'
+        required: true
+        default: 'v25.12.1'
+        type: choice
+        options:
+          - v25.12.1
+          - v25.12.0
+      imagebuilder_image:
+        description: '自定义 ImageBuilder 镜像，留空用默认'
+        required: false
+        default: ''
+        type: string
+      rootfs_partsize:
+        description: 'RootFS 大小'
+        required: true
+        default: '2G'
+        type: choice
+        options:
+          - 512M
+          - 1G
+          - 2G
+          - 4G
+      lan_ip:
+        description: 'LAN 管理地址'
+        required: true
+        default: '192.168.100.1'
+        type: string
+      root_password:
+        description: 'root 密码，留空保留默认'
+        required: false
+        default: 'password'
+        type: string
+      include_third_party_pkgs:
+        description: '编译并注入第三方包'
+        required: true
+        default: false
+        type: boolean
+      extra_packages:
+        description: '附加软件包，空格分隔'
+        required: false
+        default: ''
+        type: string
+      upload_release:
+        description: '发布到 Release'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: h28k-firmware-imagebuilder-${{ github.ref }}-${{ inputs.target_tag }}-${{ inputs.imagebuilder_image || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 H28K (${{ inputs.target_tag }}, ${{ inputs.rootfs_partsize }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    env:
+      DEFAULT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/h28k-imagebuilder:${{ inputs.target_tag }}
+      CUSTOM_IMAGE_NAME: ${{ inputs.imagebuilder_image }}
+      MIRRORS_CONF: config/immortalwrt-mirrors.conf
+      THIRD_PARTY_CONF: config/packages.conf
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 解析版本
+        id: release
+        run: |
+          set -euo pipefail
+          TAG='${{ inputs.target_tag }}'
+          VERSION="${TAG#v}"
+          PATH_TARGET="releases/${VERSION}/targets/rockchip/armv8"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "date=$(TZ=Asia/Hong_Kong date +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+          echo "path_target=${PATH_TARGET}" >> "$GITHUB_OUTPUT"
+
+      - name: 选择版本适配文件
+        id: compat
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.release.outputs.tag }}'
+          case "$TAG" in
+            v25.12.*)
+              PATCH_DIR='patches'
+              FIRMWARE_PACKAGES_CONFIG='config/immortalwrt-25.12.config'
+              SUPPORT_RANGE='v25.12.x'
+              ;;
+            *)
+              echo "不支持的版本：$TAG。当前仅支持 v25.12.x。" >&2
+              exit 1
+              ;;
+          esac
+          test -d "$PATCH_DIR"
+          test -f "$FIRMWARE_PACKAGES_CONFIG"
+          echo "patch_dir=$PATCH_DIR" >> "$GITHUB_OUTPUT"
+          echo "firmware_packages_config=$FIRMWARE_PACKAGES_CONFIG" >> "$GITHUB_OUTPUT"
+          echo "support_range=$SUPPORT_RANGE" >> "$GITHUB_OUTPUT"
+          echo "补丁目录：$PATCH_DIR"
+          echo "固件包配置：$FIRMWARE_PACKAGES_CONFIG"
+          echo "支持范围：$SUPPORT_RANGE"
+
+      - name: 选择镜像源
+        id: mirror
+        run: |
+          set -euo pipefail
+          PATH_TARGET='${{ steps.release.outputs.path_target }}'
+          MIRRORS_FILE="$MIRRORS_CONF"
+          if [ ! -f "$MIRRORS_FILE" ]; then
+            echo "缺少镜像配置：$MIRRORS_FILE" >&2
+            exit 1
+          fi
+
+          WORKING_MIRROR=""
+          echo "探测镜像源：$MIRRORS_FILE"
+          while IFS= read -r mirror || [ -n "$mirror" ]; do
+            mirror="${mirror%$'\r'}"
+            mirror="${mirror%%#*}"
+            mirror="$(xargs <<< "$mirror")"
+            [ -n "$mirror" ] || continue
+            mirror="${mirror%/}"
+            echo "探测：$mirror"
+            if curl -fsSL --connect-timeout 4 --retry 0 "${mirror}/${PATH_TARGET}/sha256sums" -o /tmp/sha256sums; then
+              WORKING_MIRROR="$mirror"
+              echo "选用：$WORKING_MIRROR"
+              break
+            fi
+            echo "跳过：$mirror"
+          done < "$MIRRORS_FILE"
+
+          if [ -z "$WORKING_MIRROR" ]; then
+            echo "没有可用镜像源" >&2
+            exit 1
+          fi
+          BASE_URL="${WORKING_MIRROR}/${PATH_TARGET}"
+          echo "WORKING_MIRROR=${WORKING_MIRROR}" >> "$GITHUB_ENV"
+          echo "working_mirror=${WORKING_MIRROR}" >> "$GITHUB_OUTPUT"
+          echo "base_url=${BASE_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: 读取官方 ABI
+        id: official
+        run: |
+          set -euo pipefail
+          BASE_URL='${{ steps.mirror.outputs.base_url }}'
+          curl -fsSL --connect-timeout 8 "$BASE_URL/profiles.json" -o /tmp/profiles.json
+          official_abi="$(jq -r '.linux_kernel.vermagic // empty' /tmp/profiles.json)"
+          test -n "$official_abi"
+          official_kernel=""
+          if curl -fsSL --connect-timeout 8 "$BASE_URL/packages/index.json" -o /tmp/index.json; then
+            official_kernel="$(jq -r '.packages.kernel // empty' /tmp/index.json)"
+          fi
+          echo "official_kernel=$official_kernel"
+          echo "official_abi=$official_abi"
+          echo "official_kernel=$official_kernel" >> "$GITHUB_OUTPUT"
+          echo "official_abi=$official_abi" >> "$GITHUB_OUTPUT"
+
+      - name: 解析 ImageBuilder 镜像
+        id: image
+        run: |
+          set -euo pipefail
+          image="$(printf '%s' "$CUSTOM_IMAGE_NAME" | xargs)"
+          if [ -z "$image" ]; then
+            image="$DEFAULT_IMAGE_NAME"
+          fi
+          echo "IMAGE_NAME=$image" >> "$GITHUB_ENV"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "ImageBuilder：$image"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 拉取 ImageBuilder 镜像
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_NAME"
+
+      - name: 安装 SDK 依赖
+        if: ${{ inputs.include_third_party_pkgs }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-pyelftools python3-pip rsync swig python3-dev python3-setuptools
+
+      - name: 编译第三方包
+        if: ${{ inputs.include_third_party_pkgs }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/extra-apks"
+          : > /tmp/third-party-packages.list
+          : > /tmp/third-party-build-failed.list
+          BASE_URL='${{ steps.mirror.outputs.base_url }}'
+          THIRD_PARTY_FILE="$THIRD_PARTY_CONF"
+          if [ ! -f "$THIRD_PARTY_FILE" ]; then
+            echo "缺少第三方包配置：$THIRD_PARTY_FILE，跳过第三方包编译" >&2
+            exit 0
+          fi
+
+          SDK_FILENAME=$(grep -E 'immortalwrt-sdk-.*rockchip-armv8.*' /tmp/sha256sums | awk '{print $2}' | sed 's/^\*//' | head -n1)
+          if [ -z "$SDK_FILENAME" ]; then
+            echo 'sha256sums 中未找到 SDK，跳过第三方包编译' >&2
+            exit 0
+          fi
+          echo "下载 SDK：${SDK_FILENAME}"
+          if ! curl -fsSL --connect-timeout 10 --retry 2 "${BASE_URL}/${SDK_FILENAME}" -o /tmp/sdk_archive.tar; then
+            echo 'SDK 下载失败，跳过第三方包编译' >&2
+            echo 'sdk-download-failed' >> /tmp/third-party-build-failed.list
+            exit 0
+          fi
+
+          rm -rf /tmp/sdk
+          mkdir -p /tmp/sdk
+          if ! tar -xf /tmp/sdk_archive.tar --strip-components=1 -C /tmp/sdk/; then
+            echo 'SDK 解包失败，跳过第三方包编译' >&2
+            echo 'sdk-extract-failed' >> /tmp/third-party-build-failed.list
+            exit 0
+          fi
+          mkdir -p /tmp/sdk/package/custom /tmp/third-party-src
+
+          CUSTOM_PKGS=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            read -r -a clone_cmd <<< "$line"
+            if [ "${clone_cmd[0]:-}" != git ] || [ "${clone_cmd[1]:-}" != clone ]; then
+              echo "仅允许 git clone，跳过：$line" >&2
+              echo "clone-command-invalid:$line" >> /tmp/third-party-build-failed.list
+              continue
+            fi
+            dst="${clone_cmd[-1]}"
+            if [[ "$dst" = /* || "$dst" = *..* ]]; then
+              echo "clone 目录无效，跳过：$dst" >&2
+              echo "clone-dst-invalid:$dst" >> /tmp/third-party-build-failed.list
+              continue
+            fi
+
+            echo "克隆：$line"
+            if ! (cd /tmp/sdk && "${clone_cmd[@]}"); then
+              echo "克隆失败，跳过：$line" >&2
+              echo "clone-failed:$dst" >> /tmp/third-party-build-failed.list
+              continue
+            fi
+
+            package_names=()
+            while IFS= read -r makefile; do
+              while IFS= read -r pkg; do
+                [ -n "$pkg" ] && package_names+=("$pkg")
+              done < <(
+                sed -nE \
+                  -e 's/^PKG_NAME:=[[:space:]]*([^[:space:]]+).*/\1/p' \
+                  -e 's/^define Package\/([^/$[:space:]]+)(\/.*)?$/\1/p' \
+                  "$makefile"
+              )
+
+              # LuCI packages may not define Package/<name> directly. In that
+              # case luci.mk derives the package name from the package directory.
+              if grep -Eq '^(LUCI_TITLE:=|LUCI_DEPENDS:=|include .*/luci\.mk)' "$makefile"; then
+                package_names+=("$(basename "$(dirname "$makefile")")")
+              fi
+            done < <(find "/tmp/sdk/$dst" -name Makefile -print)
+
+            mapfile -t package_names < <(printf '%s\n' "${package_names[@]}" | grep -Ev '^\$\(' | sort -u)
+            if [ "${#package_names[@]}" -eq 0 ]; then
+              echo "未找到 OpenWrt 包定义，跳过：$dst" >&2
+              echo "no-package-definition:$dst" >> /tmp/third-party-build-failed.list
+              continue
+            fi
+            for pkg in "${package_names[@]}"; do
+              CUSTOM_PKGS+=("$pkg")
+            done
+          done < <(grep -Ev '^[[:space:]]*(#|$)' "$THIRD_PARTY_FILE")
+
+          mapfile -t CUSTOM_PKGS < <(printf '%s\n' "${CUSTOM_PKGS[@]}" | sort -u)
+
+          if [ "${#CUSTOM_PKGS[@]}" -eq 0 ]; then
+            echo '未配置可编译的第三方包，跳过第三方包编译'
+            exit 0
+          fi
+          echo '待编译第三方包：'
+          printf '%s\n' "${CUSTOM_PKGS[@]}"
+
+          cd /tmp/sdk
+          ./scripts/feeds update -a >/dev/null 2>&1 || true
+          ./scripts/feeds install -a >/dev/null 2>&1 || true
+          for pkg in "${CUSTOM_PKGS[@]}"; do
+            echo "CONFIG_PACKAGE_${pkg}=m" >> .config
+          done
+          make defconfig >/dev/null 2>&1 || true
+
+          total=${#CUSTOM_PKGS[@]}
+          idx=1
+          SUCCESS_PKGS=()
+          for pkg in "${CUSTOM_PKGS[@]}"; do
+            echo "构建包 [$idx/$total]：$pkg"
+            if make "package/$pkg/compile" IGNORE_ERRORS=m -j"$(nproc)" >/dev/null 2>&1; then
+              echo "完成：$pkg"
+              SUCCESS_PKGS+=("$pkg")
+            else
+              echo "并行失败，单线程重试：$pkg"
+              if make "package/$pkg/compile" IGNORE_ERRORS=m -j1 V=s; then
+                echo "完成：$pkg"
+                SUCCESS_PKGS+=("$pkg")
+              else
+                echo "编译失败，跳过第三方包：$pkg" >&2
+                echo "$pkg" >> /tmp/third-party-build-failed.list
+              fi
+            fi
+            idx=$((idx + 1))
+          done
+
+          if [ "${#SUCCESS_PKGS[@]}" -gt 0 ]; then
+            printf '%s\n' "${SUCCESS_PKGS[@]}" | sort -u > /tmp/third-party-packages.list
+          fi
+          echo '已编译第三方包：'
+          cat /tmp/third-party-packages.list || true
+          echo '第三方包编译失败/跳过：'
+          cat /tmp/third-party-build-failed.list || true
+
+          find bin/packages/ -type f \( -name "*.apk" -o -name "*.ipk" \) -exec cp -av {} "$GITHUB_WORKSPACE/extra-apks/" \; 2>/dev/null || true
+          echo "extra-apks："
+          ls -la "$GITHUB_WORKSPACE/extra-apks/"
+
+      - name: 准备软件包和文件
+        id: prepare
+        env:
+          LAN_IP: ${{ inputs.lan_ip }}
+          ROOT_PASSWORD: ${{ inputs.root_password }}
+        run: |
+          set -euo pipefail
+          mkdir -p output files
+          BASE_PACKAGES="$(
+            {
+              sed -nE 's/^CONFIG_PACKAGE_([^=]+)=(y|m)$/\1/p' '${{ steps.compat.outputs.firmware_packages_config }}'
+              grep -Ev '^[[:space:]]*(#|$|CONFIG_)' '${{ steps.compat.outputs.firmware_packages_config }}' | grep -Ev '=' || true
+            } | sort -u | tr '\n' ' ' | xargs
+          )"
+          THIRD_PARTY_PACKAGES=""
+          if [ '${{ inputs.include_third_party_pkgs }}' = 'true' ]; then
+            if [ ! -f /tmp/third-party-packages.list ]; then
+              echo '未生成第三方包列表，按空第三方包列表继续' >&2
+              : > /tmp/third-party-packages.list
+            fi
+            THIRD_PARTY_PACKAGES="$(tr '\n' ' ' < /tmp/third-party-packages.list | xargs)"
+          fi
+          EXTRA='${{ inputs.extra_packages }}'
+          PACKAGES="$(xargs <<< "${BASE_PACKAGES} ${THIRD_PARTY_PACKAGES} ${EXTRA}")"
+          printf '%s\n' $PACKAGES > /tmp/requested-packages.list
+          echo "packages=${PACKAGES}" >> "$GITHUB_OUTPUT"
+          echo 'PACKAGES：'
+          echo "$PACKAGES"
+
+          case '${{ inputs.rootfs_partsize }}' in
+            512M) ROOTFS_PARTSIZE=512 ;;
+            1G) ROOTFS_PARTSIZE=1024 ;;
+            2G) ROOTFS_PARTSIZE=2048 ;;
+            4G) ROOTFS_PARTSIZE=4096 ;;
+            *) echo '不支持的 RootFS 大小：${{ inputs.rootfs_partsize }}' >&2; exit 1 ;;
+          esac
+          echo "rootfs_partsize=${ROOTFS_PARTSIZE}" >> "$GITHUB_OUTPUT"
+          echo "ROOTFS_PARTSIZE=${ROOTFS_PARTSIZE} MiB"
+
+          {
+            printf 'lan_ip=%s\n' "$LAN_IP"
+            printf 'password=%s\n' "$ROOT_PASSWORD"
+            printf 'check_official_abi=true\n'
+          } > /tmp/firmware-imagebuilder.conf
+          bash scripts/build_config.sh prepare-imagebuilder-files \
+            files \
+            /tmp/firmware-imagebuilder.conf
+          echo "FIRMWARE_LAN_IP=$LAN_IP" >> "$GITHUB_ENV"
+          echo "FIRMWARE_PASSWORD=$ROOT_PASSWORD" >> "$GITHUB_ENV"
+          echo "ROOTFS_PARTSIZE_LABEL=${{ inputs.rootfs_partsize }}" >> "$GITHUB_ENV"
+
+      - name: 校验 ImageBuilder
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE_NAME" '
+            set -euo pipefail
+            if [ -f profiles.json ]; then
+              profiles_json=profiles.json
+            else
+              profiles_json="$(find . -path "*/profiles.json" -type f | head -n1 || true)"
+            fi
+            if [ -z "${profiles_json:-}" ] || [ ! -f "$profiles_json" ]; then
+              echo "profiles.json not found in ImageBuilder container." >&2
+              find . -maxdepth 2 -type f | sort | head -200 >&2
+              exit 1
+            fi
+            echo "profiles_json=$profiles_json"
+            jq -r .linux_kernel "$profiles_json"
+            jq -e .profiles.hinlink_h28k "$profiles_json" >/dev/null
+            make info PROFILE=hinlink_h28k
+          '
+
+      - name: 构建 H28K 固件
+        env:
+          PACKAGES: ${{ steps.prepare.outputs.packages }}
+          ROOTFS_PARTSIZE: ${{ steps.prepare.outputs.rootfs_partsize }}
+          WORKING_MIRROR: ${{ steps.mirror.outputs.working_mirror }}
+          INCLUDE_THIRD_PARTY: ${{ inputs.include_third_party_pkgs }}
+        run: |
+          set -euo pipefail
+          DOCKER_RUN_ARGS=(
+            --rm
+            -e "PACKAGES=$PACKAGES"
+            -e "ROOTFS_PARTSIZE=$ROOTFS_PARTSIZE"
+            -e "WORKING_MIRROR=$WORKING_MIRROR"
+            -v "$GITHUB_WORKSPACE/output:/output"
+            -v "$GITHUB_WORKSPACE/files:/home/builder/imagebuilder/files:ro"
+          )
+          if [ "$INCLUDE_THIRD_PARTY" = "true" ] && [ -d "$GITHUB_WORKSPACE/extra-apks" ]; then
+            DOCKER_RUN_ARGS+=(-v "$GITHUB_WORKSPACE/extra-apks:/home/builder/imagebuilder/packages/extra:ro")
+          fi
+
+          docker run "${DOCKER_RUN_ARGS[@]}" "$IMAGE_NAME" '
+            set -euo pipefail
+            if [ -n "$WORKING_MIRROR" ] && [ -f repositories.conf ]; then
+              echo "替换软件源：$WORKING_MIRROR"
+              sed -i "s|https://downloads.immortalwrt.org|$WORKING_MIRROR|g" repositories.conf || true
+            fi
+            if [ -d packages/extra ]; then
+              echo "注入第三方包"
+              cp -av packages/extra/* packages/ 2>/dev/null || true
+            fi
+            echo "开始构建，PACKAGES："
+            echo "$PACKAGES"
+            make image PROFILE=hinlink_h28k \
+              PACKAGES="$PACKAGES" \
+              FILES=files \
+              ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" \
+              CONFIG_TARGET_ROOTFS_SQUASHFS=y \
+              CONFIG_TARGET_ROOTFS_EXT4FS=y \
+              CONFIG_TARGET_ROOTFS_TARGZ=y \
+              IGNORE_ERRORS=1
+            mkdir -p /output
+            cp -av bin/targets/rockchip/armv8/*hinlink*h28k* /output/ || true
+            cp -av bin/targets/rockchip/armv8/*rootfs*.tar.gz /output/ || true
+            rm -f /output/*-targz-rootfs.tar.gz
+            [ -f profiles.json ] && cp -av profiles.json /output/profiles.json || true
+            find /output -maxdepth 1 -type f -print
+          '
+
+      - name: 检查固件和 ABI
+        id: check
+        run: |
+          set -euo pipefail
+          echo '产物：'
+          ls -lh output
+          shopt -s nullglob
+          squashfs=(output/*hinlink*h28k*squashfs*sysupgrade.img.gz output/*hinlink_h28k*squashfs*sysupgrade.img.gz)
+          ext4=(output/*hinlink*h28k*ext4*sysupgrade.img.gz output/*hinlink_h28k*ext4*sysupgrade.img.gz)
+          lxc=(output/*hinlink_h28k-rootfs.tar.gz)
+          if [ "${#squashfs[@]}" -eq 0 ]; then
+            echo '未找到 H28K squashfs sysupgrade 固件' >&2
+            exit 1
+          fi
+          if [ "${#ext4[@]}" -eq 0 ]; then
+            echo '未找到 H28K ext4 sysupgrade 固件' >&2
+            exit 1
+          fi
+          if [ "${#lxc[@]}" -eq 0 ]; then
+            echo '未找到 H28K LXC rootfs tar.gz' >&2
+            exit 1
+          fi
+          ls -lh "${squashfs[@]}" "${ext4[@]}" "${lxc[@]}"
+          test -f output/profiles.json
+          ib_abi="$(jq -r '.linux_kernel.vermagic // empty' output/profiles.json)"
+          official_abi='${{ steps.official.outputs.official_abi }}'
+          echo "official_kernel=${{ steps.official.outputs.official_kernel }}"
+          echo "official_abi=$official_abi"
+          echo "ib_abi=$ib_abi"
+          test -n "$ib_abi"
+          if [ "$ib_abi" = "$official_abi" ]; then
+            echo "ABI 校验通过"
+          else
+            echo "ABI 校验失败" >&2
+            exit 1
+          fi
+          echo "abi=$ib_abi" >> "$GITHUB_OUTPUT"
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: HINLINK-H28K-imagebuilder-${{ steps.release.outputs.tag }}-${{ steps.check.outputs.abi }}-${{ inputs.rootfs_partsize }}
+          path: output/*
+          retention-days: 14
+
+      - name: 生成编译总结
+        id: summary
+        env:
+          BUILD_DATE: ${{ steps.release.outputs.date }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          ROOTFS_PARTSIZE_LABEL: ${{ env.ROOTFS_PARTSIZE_LABEL }}
+          FIRMWARE_LAN_IP: ${{ env.FIRMWARE_LAN_IP }}
+          FIRMWARE_PASSWORD: ${{ env.FIRMWARE_PASSWORD }}
+          IMAGEBUILDER_IMAGE: ${{ steps.image.outputs.image }}
+          WORKING_MIRROR: ${{ steps.mirror.outputs.working_mirror }}
+          OFFICIAL_KERNEL: ${{ steps.official.outputs.official_kernel }}
+          KERNEL_ABI: ${{ steps.check.outputs.abi }}
+        run: |
+          set -euo pipefail
+          mkdir -p summary
+          manifest="$(find output -maxdepth 1 -name '*.manifest' -print -quit || true)"
+          awk '
+            /^# HINLINK H28K ImageBuilder 明确启用的软件包$/ { in_section = 1; next }
+            in_section && /^# v25 中不再使用\/当前不启用的旧包名或第三方主题记录$/ { exit }
+            in_section && /^CONFIG_PACKAGE_[^=]+=(y|m)$/ {
+              sub(/^CONFIG_PACKAGE_/, "")
+              sub(/=(y|m)$/, "")
+              print
+            }
+          ' '${{ steps.compat.outputs.firmware_packages_config }}' | sort -u > /tmp/summary-requested-packages.list
+          bash scripts/firmware_summary.sh \
+            summary/release-body.md \
+            "$manifest" \
+            /tmp/requested-packages.list \
+            /tmp/third-party-build-failed.list \
+            /tmp/summary-requested-packages.list
+          cat summary/release-body.md >> "$GITHUB_STEP_SUMMARY"
+          echo "body=summary/release-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: 清理当天 Release
+        if: ${{ inputs.upload_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: h28k-ib-${{ steps.release.outputs.tag }}-${{ steps.release.outputs.date }}
+        run: |
+          set -euo pipefail
+          gh release delete "$RELEASE_TAG" --cleanup-tag -y 2>/dev/null || true
+
+      - name: 发布固件
+        if: ${{ inputs.upload_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: h28k-ib-${{ steps.release.outputs.tag }}-${{ steps.release.outputs.date }}
+          name: HINLINK H28K ImageBuilder 固件 ${{ steps.release.outputs.tag }} (${{ steps.release.outputs.date }})
+          body_path: ${{ steps.summary.outputs.body }}
+          files: output/*
+          make_latest: true
+          fail_on_unmatched_files: true

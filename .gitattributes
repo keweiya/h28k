@@ -1,0 +1,7 @@
+*.patch text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.config text eol=lf
+*.conf text eol=lf
+README.md text eol=lf

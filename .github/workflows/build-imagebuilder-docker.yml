@@ -221,22 +221,34 @@ jobs:
           cp .config.buildinfo .config.official
           cp .config.official .config
 
-          ./scripts/config --file .config -d ALL_KMODS
-          ./scripts/config --file .config -d ALL_NONSHARED
-          ./scripts/config --file .config -d ALL
-          ./scripts/config --file .config -d SDK
-          ./scripts/config --file .config -d SDK_LLVM_BPF
-          ./scripts/config --file .config -d MAKE_TOOLCHAIN
-          ./scripts/config --file .config -d TARGET_ALL_PROFILES
-          ./scripts/config --file .config -d TARGET_MULTI_PROFILE
+          set_config() {
+            local symbol="$1" value="$2"
+            sed -i -E "/^(# )?${symbol}(=| is not set)/d" .config
+            printf '%s=%s\n' "$symbol" "$value" >> .config
+          }
 
-          ./scripts/config --file .config -e IB
-          ./scripts/config --file .config -e TARGET_rockchip
-          ./scripts/config --file .config -e TARGET_rockchip_armv8
-          ./scripts/config --file .config -e TARGET_PER_DEVICE_ROOTFS
-          ./scripts/config --file .config -e TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k
-          ./scripts/config --file .config -s TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k ""
-          ./scripts/config --file .config -e TARGET_rockchip_armv8_DEVICE_hinlink_h28k || true
+          unset_config() {
+            local symbol="$1"
+            sed -i -E "/^(# )?${symbol}(=| is not set)/d" .config
+            printf '# %s is not set\n' "$symbol" >> .config
+          }
+
+          unset_config CONFIG_ALL_KMODS
+          unset_config CONFIG_ALL_NONSHARED
+          unset_config CONFIG_ALL
+          unset_config CONFIG_SDK
+          unset_config CONFIG_SDK_LLVM_BPF
+          unset_config CONFIG_MAKE_TOOLCHAIN
+          unset_config CONFIG_TARGET_ALL_PROFILES
+          unset_config CONFIG_TARGET_MULTI_PROFILE
+
+          set_config CONFIG_IB y
+          set_config CONFIG_TARGET_rockchip y
+          set_config CONFIG_TARGET_rockchip_armv8 y
+          set_config CONFIG_TARGET_PER_DEVICE_ROOTFS y
+          set_config CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k y
+          set_config CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k '""'
+          set_config CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k y
 
           cat "$GITHUB_WORKSPACE/config/h28k-imagebuilder.config" >> .config
           make defconfig

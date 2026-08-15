@@ -40,7 +40,7 @@ jobs:
       REPO_URL: https://github.com/immortalwrt/immortalwrt.git
       TARGET: rockchip/armv8
       IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/h28k-imagebuilder
-      STRATEGY: official-buildinfo-full
+      STRATEGY: kernel-strict
       MIRRORS_CONF: config/immortalwrt-mirrors.conf
 
     steps:
@@ -215,42 +215,30 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL '${{ steps.mirror.outputs.base_url }}/config.buildinfo' -o .config.buildinfo
-          # 从官方 config.buildinfo 开始，保留官方 kernel/buildbot 相关配置，
-          # 但裁剪 ALL_KMODS/SDK/ALL_PROFILES 等全量构建选项，避免在 GitHub Actions
-          # 上把官方 buildbot 的所有 kmod、SDK、全部设备 profile 都重新编译一遍。
-          cp .config.buildinfo .config.official
-          cp .config.official .config
+          # 只保留对官方 kernel ABI / ImageBuilder 生成必要的配置，避免 official-buildinfo-full
+          # 带来的大量无用包编译；同时不得裁剪 ALL_KMODS/SDK/ALL_PROFILES 等会影响 .vermagic 的选项。
+          awk '
+            /^CONFIG_TARGET_rockchip=y$/ ||
+            /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+            /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+            /^CONFIG_ALL_KMODS=y$/ ||
+            /^CONFIG_ALL_NONSHARED=y$/ ||
+            /^CONFIG_DEVEL=y$/ ||
+            /^CONFIG_BUILDBOT=y$/ ||
+            /^CONFIG_IB=y$/ ||
+            /^CONFIG_SDK=y$/ ||
+            /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+            /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+            /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+            /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+            /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+            /^CONFIG_VERSION_REPO=/ ||
+            /^CONFIG_VERSION_DIST=/ ||
+            /^CONFIG_VERSIONOPT=y$/ ||
+            /^CONFIG_VERSION_FILENAMES=y$/
+          ' .config.buildinfo > .config.official
 
-          set_config() {
-            local symbol="$1" value="$2"
-            sed -i -E "/^(# )?${symbol}(=| is not set)/d" .config
-            printf '%s=%s\n' "$symbol" "$value" >> .config
-          }
-
-          unset_config() {
-            local symbol="$1"
-            sed -i -E "/^(# )?${symbol}(=| is not set)/d" .config
-            printf '# %s is not set\n' "$symbol" >> .config
-          }
-
-          unset_config CONFIG_ALL_KMODS
-          unset_config CONFIG_ALL_NONSHARED
-          unset_config CONFIG_ALL
-          unset_config CONFIG_SDK
-          unset_config CONFIG_SDK_LLVM_BPF
-          unset_config CONFIG_MAKE_TOOLCHAIN
-          unset_config CONFIG_TARGET_ALL_PROFILES
-          unset_config CONFIG_TARGET_MULTI_PROFILE
-
-          set_config CONFIG_IB y
-          set_config CONFIG_TARGET_rockchip y
-          set_config CONFIG_TARGET_rockchip_armv8 y
-          set_config CONFIG_TARGET_PER_DEVICE_ROOTFS y
-          set_config CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k y
-          set_config CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k '""'
-          set_config CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k y
-
-          cat "$GITHUB_WORKSPACE/config/h28k-imagebuilder.config" >> .config
+          cat .config.official "$GITHUB_WORKSPACE/config/h28k-imagebuilder.config" > .config
           make defconfig
 
           if ! grep -Eq 'CONFIG_TARGET(_DEVICE)?_rockchip_armv8_DEVICE_hinlink_h28k=y' .config; then
@@ -304,27 +292,10 @@ jobs:
           set -o pipefail
           echo "=== Build started: $(date) ==="
 
-          (
-            while true; do
-              echo "=== heartbeat: $(date) ==="
-              echo "--- disk ---"
-              df -h /
-              echo "--- memory ---"
-              free -h
-              echo "--- top cpu processes ---"
-              ps -eo pid,ppid,stat,etime,%cpu,%mem,cmd --sort=-%cpu | head -30
-              sleep 300
-            done
-          ) &
-          heartbeat_pid=$!
-
           set +e
           make -j"$(nproc)" 2>&1 | tee build.log
           code=${PIPESTATUS[0]}
           set -e
-
-          kill "$heartbeat_pid" 2>/dev/null || true
-          wait "$heartbeat_pid" 2>/dev/null || true
 
           if [ "$code" -ne 0 ]; then
             echo '=== Parallel build failed, retry with -j1 V=s ==='

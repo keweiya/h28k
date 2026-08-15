@@ -1,0 +1,726 @@
+name: 实验 H28K ImageBuilder Docker 精简策略
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'ImmortalWrt 版本'
+        required: true
+        default: 'v25.12.1'
+        type: choice
+        options:
+          - v25.12.1
+          - v25.12.0
+      abi_strategy:
+        description: '精简策略：all-safe 并行尝试较稳妥策略，all 包含激进 ABI 边界测试'
+        required: true
+        default: 'all-safe'
+        type: choice
+        options:
+          - all-safe
+          - all
+          - kernel-strict
+          - kernel-strict-nosdk
+          - kernel-strict-no-per-device-rootfs
+          - kernel-strict-nosdk-no-per-device-rootfs
+          - kernel-strict-no-buildbot
+          - kernel-strict-no-reproducible-debug-info
+          - kernel-single-profile-abi-test
+      build_firmware_smoke_test:
+        description: '构建后试编固件'
+        required: true
+        default: true
+        type: boolean
+      firmware_smoke_packages:
+        description: '试编固件额外安装包，用于验证官方 packages/kmods；留空则只编默认 H28K 固件'
+        required: false
+        default: ''
+        type: string
+      prebuilt_imagebuilder_url:
+        description: '预构建 tarball URL，留空则编译'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: h28k-imagebuilder-docker-experiment-${{ github.ref }}-${{ inputs.target_tag }}-${{ inputs.abi_strategy }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: 生成实验矩阵
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: 解析策略集合
+        id: matrix
+        run: |
+          set -euo pipefail
+          case '${{ inputs.abi_strategy }}' in
+            all-safe)
+              echo 'matrix={"include":[{"strategy":"kernel-strict"},{"strategy":"kernel-strict-nosdk"},{"strategy":"kernel-strict-no-per-device-rootfs"},{"strategy":"kernel-strict-nosdk-no-per-device-rootfs"}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            all)
+              echo 'matrix={"include":[{"strategy":"kernel-strict"},{"strategy":"kernel-strict-nosdk"},{"strategy":"kernel-strict-no-per-device-rootfs"},{"strategy":"kernel-strict-nosdk-no-per-device-rootfs"},{"strategy":"kernel-strict-no-buildbot"},{"strategy":"kernel-strict-no-reproducible-debug-info"},{"strategy":"kernel-single-profile-abi-test"}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            kernel-strict|kernel-strict-nosdk|kernel-strict-no-per-device-rootfs|kernel-strict-nosdk-no-per-device-rootfs|kernel-strict-no-buildbot|kernel-strict-no-reproducible-debug-info|kernel-single-profile-abi-test)
+              echo 'matrix={"include":[{"strategy":"${{ inputs.abi_strategy }}"}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'Unsupported abi_strategy: ${{ inputs.abi_strategy }}' >&2
+              exit 1
+              ;;
+          esac
+
+  build:
+    name: 实验 ${{ matrix.strategy }} (${{ inputs.target_tag }})
+    needs: matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.matrix) }}
+
+    env:
+      REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+      TARGET: rockchip/armv8
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/h28k-imagebuilder
+      STRATEGY: ${{ matrix.strategy }}
+      MIRRORS_CONF: config/immortalwrt-mirrors.conf
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 解析版本
+        id: release
+        run: |
+          set -euo pipefail
+          TAG='${{ inputs.target_tag }}'
+          VERSION="${TAG#v}"
+          PATH_TARGET="releases/${VERSION}/targets/${TARGET}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "path_target=${PATH_TARGET}" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "版本：${TAG}"
+
+      - name: 选择版本适配文件
+        id: compat
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.release.outputs.tag }}'
+          case "$TAG" in
+            v25.12.*)
+              PATCH_DIR='patches'
+              FIRMWARE_PACKAGES_CONFIG='config/immortalwrt-25.12.config'
+              SUPPORT_RANGE='v25.12.x'
+              ;;
+            *)
+              echo "不支持的版本：$TAG。当前仅支持 v25.12.x。" >&2
+              exit 1
+              ;;
+          esac
+          test -d "$PATCH_DIR"
+          test -f "$FIRMWARE_PACKAGES_CONFIG"
+          echo "patch_dir=$PATCH_DIR" >> "$GITHUB_OUTPUT"
+          echo "firmware_packages_config=$FIRMWARE_PACKAGES_CONFIG" >> "$GITHUB_OUTPUT"
+          echo "support_range=$SUPPORT_RANGE" >> "$GITHUB_OUTPUT"
+          echo "补丁目录：$PATCH_DIR"
+          echo "固件包配置：$FIRMWARE_PACKAGES_CONFIG"
+          echo "支持范围：$SUPPORT_RANGE"
+
+      - name: 选择镜像源
+        id: mirror
+        run: |
+          set -euo pipefail
+          PATH_TARGET='${{ steps.release.outputs.path_target }}'
+          MIRRORS_FILE="$MIRRORS_CONF"
+          if [ ! -f "$MIRRORS_FILE" ]; then
+            echo "缺少镜像配置：$MIRRORS_FILE" >&2
+            exit 1
+          fi
+          WORKING_MIRROR=""
+          echo "探测镜像源：$MIRRORS_FILE"
+          while IFS= read -r mirror || [ -n "$mirror" ]; do
+            mirror="${mirror%$'\r'}"
+            mirror="${mirror%%#*}"
+            mirror="$(xargs <<< "$mirror")"
+            [ -n "$mirror" ] || continue
+            mirror="${mirror%/}"
+            echo "探测：$mirror"
+            if curl -fsSL --connect-timeout 4 --retry 0 "${mirror}/${PATH_TARGET}/sha256sums" -o /tmp/sha256sums; then
+              WORKING_MIRROR="$mirror"
+              echo "选用：$WORKING_MIRROR"
+              break
+            fi
+            echo "跳过：$mirror"
+          done < "$MIRRORS_FILE"
+          if [ -z "$WORKING_MIRROR" ]; then
+            echo "没有可用镜像源" >&2
+            exit 1
+          fi
+          BASE_URL="${WORKING_MIRROR}/${PATH_TARGET}"
+          echo "WORKING_MIRROR=${WORKING_MIRROR}" >> "$GITHUB_ENV"
+          echo "working_mirror=${WORKING_MIRROR}" >> "$GITHUB_OUTPUT"
+          echo "base_url=${BASE_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: 读取官方 ABI
+        id: official
+        run: |
+          set -euo pipefail
+          BASE_URL='${{ steps.mirror.outputs.base_url }}'
+          curl -fsSL "$BASE_URL/profiles.json" -o /tmp/profiles.json
+          curl -fsSL "$BASE_URL/packages/index.json" -o /tmp/index.json
+          official_abi_from_profiles="$(jq -r '.linux_kernel.vermagic // empty' /tmp/profiles.json)"
+          official_kernel="$(jq -r '.packages.kernel' /tmp/index.json)"
+          official_abi_from_index="$(sed -nE 's/.*~([0-9a-f]{32})-r[0-9]+/\1/p' <<< "$official_kernel")"
+          if [ -n "$official_abi_from_profiles" ]; then
+            official_abi="$official_abi_from_profiles"
+          else
+            official_abi="$official_abi_from_index"
+          fi
+          test -n "$official_abi"
+          if [ -n "$official_abi_from_index" ] && [ "$official_abi" != "$official_abi_from_index" ]; then
+            echo "profiles.json 与 index.json ABI 不一致" >&2
+            echo "profiles=$official_abi_from_profiles index=$official_abi_from_index" >&2
+            exit 1
+          fi
+          echo "official_kernel=$official_kernel"
+          echo "official_abi=$official_abi"
+          echo "official_kernel=$official_kernel" >> "$GITHUB_OUTPUT"
+          echo "official_abi=$official_abi" >> "$GITHUB_OUTPUT"
+
+      - name: 清理磁盘空间
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        run: |
+          set -euo pipefail
+          echo '清理前：'
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/.ghcup /usr/local/share/powershell /usr/local/share/chromium /usr/share/swift || true
+          sudo docker image prune -af || true
+          echo '清理后：'
+          df -h /
+
+      - name: 安装源码编译依赖
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            jq lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build openssl p7zip \
+            p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd time
+
+      - name: 克隆源码
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        run: |
+          set -euo pipefail
+          git clone --branch '${{ steps.release.outputs.tag }}' --single-branch --depth=1 "$REPO_URL" source
+          git -C source log -1 --oneline
+
+      - name: 应用 HINLINK H28K 补丁
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          for patch in "$GITHUB_WORKSPACE/${{ steps.compat.outputs.patch_dir }}"/*.patch; do
+            [ -f "$patch" ] || continue
+            echo "应用补丁：$(basename "$patch")"
+            git apply --check --3way "$patch" || {
+              echo "补丁检查失败：$patch" >&2
+              git apply --reject "$patch" || true
+              find . -name '*.rej' -print -exec cat {} \;
+              exit 1
+            }
+            git apply --3way "$patch"
+          done
+          git diff --stat
+
+      - name: 固定 feeds
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          curl -fsSL '${{ steps.mirror.outputs.base_url }}/feeds.buildinfo' -o feeds.conf.default
+          echo 'feeds：'
+          cat feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 生成接近官方的 .config
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          curl -fsSL '${{ steps.mirror.outputs.base_url }}/config.buildinfo' -o .config.buildinfo
+          # 实验不同精简策略。所有策略都必须保留官方 CONFIG_KERNEL_*，并通过严格 ABI 校验；
+          # 失败的策略会在 ABI 校验或 ImageBuilder/固件 smoke test 阶段直接失败。
+          case "$STRATEGY" in
+            kernel-strict)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_SDK=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-strict-nosdk)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-strict-no-per-device-rootfs)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_SDK=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-strict-nosdk-no-per-device-rootfs)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-strict-no-buildbot)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_SDK=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-strict-no-reproducible-debug-info)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_SDK=y$/ ||
+                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              ;;
+            kernel-single-profile-abi-test)
+              awk '
+                /^CONFIG_TARGET_rockchip=y$/ ||
+                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+                /^CONFIG_ALL_KMODS=y$/ ||
+                /^CONFIG_ALL_NONSHARED=y$/ ||
+                /^CONFIG_DEVEL=y$/ ||
+                /^CONFIG_BUILDBOT=y$/ ||
+                /^CONFIG_IB=y$/ ||
+                /^CONFIG_SDK=y$/ ||
+                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+                /^CONFIG_VERSION_REPO=/ ||
+                /^CONFIG_VERSION_DIST=/ ||
+                /^CONFIG_VERSIONOPT=y$/ ||
+                /^CONFIG_VERSION_FILENAMES=y$/
+              ' .config.buildinfo > .config.official
+              cat >> .config.official <<'EOF'
+CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k=y
+CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k=""
+CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y
+EOF
+              ;;
+            *)
+              echo "Unknown STRATEGY=$STRATEGY" >&2
+              exit 1
+              ;;
+          esac
+
+          cat .config.official "$GITHUB_WORKSPACE/config/h28k-imagebuilder.config" > .config
+          make defconfig
+
+          if ! grep -Eq 'CONFIG_TARGET(_DEVICE)?_rockchip_armv8_DEVICE_hinlink_h28k=y' .config; then
+            echo 'H28K profile was not enabled after first defconfig, retrying with legacy symbol...' >&2
+            printf '\nCONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y\n' >> .config
+            make defconfig
+          fi
+
+          echo '=== H28K target symbols ==='
+          grep -E 'CONFIG_TARGET.*hinlink.*h28k' .config || {
+            echo 'H28K profile is missing from final .config' >&2
+            exit 1
+          }
+
+          echo '=== Verify official CONFIG_KERNEL_* lines are preserved ==='
+          grep -E '^CONFIG_KERNEL_|^# CONFIG_KERNEL_' .config.buildinfo > .kernel.official
+          missing=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            if ! grep -Fxq "$line" .config; then
+              echo "Missing or changed official kernel config: $line" >&2
+              missing=1
+            fi
+          done < .kernel.official
+          if [ "$missing" -ne 0 ]; then
+            echo 'Final .config does not preserve all official CONFIG_KERNEL_* lines.' >&2
+            exit 1
+          fi
+
+          echo '=== Final buildbot/kernel/IB config summary ==='
+          grep -E '^(CONFIG_ALL|CONFIG_ALL_KMODS|CONFIG_ALL_NONSHARED|CONFIG_DEVEL|CONFIG_BUILDBOT|CONFIG_IB|CONFIG_SDK|CONFIG_MAKE_TOOLCHAIN|CONFIG_TARGET_MULTI_PROFILE|CONFIG_TARGET_ALL_PROFILES|CONFIG_TARGET_PER_DEVICE_ROOTFS|CONFIG_KERNEL_BUILD_USER|CONFIG_KERNEL_BUILD_DOMAIN|CONFIG_VERSION_REPO)=' .config || true
+
+      - name: 下载源码包
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        working-directory: source
+        timeout-minutes: 90
+        run: |
+          set -euo pipefail
+          if [ -n "${WORKING_MIRROR:-}" ]; then
+            echo "替换软件源：$WORKING_MIRROR"
+            sed -i "s|https://downloads.immortalwrt.org|$WORKING_MIRROR|g" .config || true
+          fi
+          make -j"$(nproc)" download V=s
+          find dl -size -1024c -print -delete
+          du -sh dl
+
+      - name: 编译自定义 ImageBuilder
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        id: compile
+        working-directory: source
+        timeout-minutes: 300
+        run: |
+          set -o pipefail
+          echo "=== Build started: $(date) ==="
+          start_ts="$(date +%s)"
+
+          set +e
+          make -j"$(nproc)" 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$code" -ne 0 ]; then
+            echo '=== Parallel build failed, retry with -j1 V=s ==='
+
+            set +e
+            make -j1 V=s 2>&1 | tee build-single.log
+            code=${PIPESTATUS[0]}
+            set -e
+
+            echo "=== arm-trusted-firmware-rockchip related log tail ==="
+            grep -nE 'arm-trusted-firmware-rockchip|rk3528|ERROR:|error:|undefined reference|No such file|not found|failed' build-single.log | tail -300 || true
+            exit "$code"
+          fi
+          end_ts="$(date +%s)"
+          duration_sec="$((end_ts - start_ts))"
+          echo "duration_sec=$duration_sec" >> "$GITHUB_OUTPUT"
+          printf '### ImageBuilder experiment result\n\n- strategy: `%s`\n- build duration: `%s` seconds (`%02d:%02d:%02d`)\n' \
+            "$STRATEGY" \
+            "$duration_sec" \
+            "$((duration_sec / 3600))" \
+            "$(((duration_sec % 3600) / 60))" \
+            "$((duration_sec % 60))" >> "$GITHUB_STEP_SUMMARY"
+          echo "=== Build finished: $(date) ==="
+
+      - name: 校验 kernel ABI 与官方一致
+        if: ${{ inputs.prebuilt_imagebuilder_url == '' }}
+        id: abi
+        working-directory: source
+        run: |
+          set -euo pipefail
+          built_abi="$(tr -d '[:space:]' < build_dir/target-*/linux-rockchip_armv8/linux-*/.vermagic)"
+          official_abi='${{ steps.official.outputs.official_abi }}'
+          echo "built_abi=$built_abi"
+          echo "official_abi=$official_abi"
+          test "$built_abi" = "$official_abi"
+          echo "abi=$built_abi" >> "$GITHUB_OUTPUT"
+          {
+            echo "- official ABI: \`$official_abi\`"
+            echo "- built ABI: \`$built_abi\`"
+            echo "- ABI check: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 下载预构建 ImageBuilder tarball
+        if: ${{ inputs.prebuilt_imagebuilder_url != '' }}
+        id: prebuilt
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq unzip
+          mkdir -p source/bin/targets/rockchip/armv8
+          url='${{ inputs.prebuilt_imagebuilder_url }}'
+          filename="${url%%\?*}"
+          filename="${filename##*/}"
+          rm -rf /tmp/h28k-prebuilt-ib
+          mkdir -p /tmp/h28k-prebuilt-ib
+          download_path=/tmp/h28k-prebuilt-ib/download
+          if [ -n "$filename" ]; then
+            download_path="/tmp/h28k-prebuilt-ib/$filename"
+          fi
+          curl -fL "$url" -o "$download_path"
+
+          case "$download_path" in
+            *.tar.zst|*.tar.xz|*.tar.gz|*.tgz)
+              cp -av "$download_path" source/bin/targets/rockchip/armv8/
+              ;;
+            *.zip)
+              unzip -q "$download_path" -d /tmp/h28k-prebuilt-ib/unzipped
+              shopt -s nullglob
+              mapfile -t tarballs < <(find /tmp/h28k-prebuilt-ib/unzipped -type f \( -iname '*ImageBuilder*.tar.*' -o -iname '*imagebuilder*.tar.*' \) | sort)
+              if [ "${#tarballs[@]}" -eq 0 ]; then
+            echo '压缩包内未找到 ImageBuilder tarball' >&2
+                find /tmp/h28k-prebuilt-ib/unzipped -maxdepth 4 -type f -print >&2
+                exit 1
+              fi
+              cp -av "${tarballs[0]}" source/bin/targets/rockchip/armv8/
+              profiles_json="$(find /tmp/h28k-prebuilt-ib/unzipped -type f -name profiles.json | head -n1 || true)"
+              [ -n "$profiles_json" ] && cp -av "$profiles_json" source/bin/targets/rockchip/armv8/profiles.json
+              ;;
+            *)
+              if file "$download_path" | grep -qi 'Zip archive data'; then
+                unzip -q "$download_path" -d /tmp/h28k-prebuilt-ib/unzipped
+                shopt -s nullglob
+                mapfile -t tarballs < <(find /tmp/h28k-prebuilt-ib/unzipped -type f \( -iname '*ImageBuilder*.tar.*' -o -iname '*imagebuilder*.tar.*' \) | sort)
+                if [ "${#tarballs[@]}" -eq 0 ]; then
+                  echo 'No ImageBuilder tarball found in artifact zip.' >&2
+                  find /tmp/h28k-prebuilt-ib/unzipped -maxdepth 4 -type f -print >&2
+                  exit 1
+                fi
+                cp -av "${tarballs[0]}" source/bin/targets/rockchip/armv8/
+                profiles_json="$(find /tmp/h28k-prebuilt-ib/unzipped -type f -name profiles.json | head -n1 || true)"
+                [ -n "$profiles_json" ] && cp -av "$profiles_json" source/bin/targets/rockchip/armv8/profiles.json
+              else
+                fallback="source/bin/targets/rockchip/armv8/immortalwrt-imagebuilder-${{ steps.release.outputs.version }}-rockchip-armv8.Linux-x86_64.tar.zst"
+                cp -av "$download_path" "$fallback"
+              fi
+              ;;
+          esac
+          echo 'abi=${{ steps.official.outputs.official_abi }}' >> "$GITHUB_OUTPUT"
+          ls -lh source/bin/targets/rockchip/armv8
+
+      - name: 定位 ImageBuilder 产物
+        id: ib
+        working-directory: source
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(bin/targets/rockchip/armv8/*ImageBuilder*.tar.* bin/targets/rockchip/armv8/*imagebuilder*.tar.*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo '未找到 ImageBuilder 产物' >&2
+            ls -lh bin/targets/rockchip/armv8 || true
+            exit 1
+          fi
+          ib_tar="${files[0]}"
+          echo "ImageBuilder：$ib_tar"
+          echo "ib_tar=$ib_tar" >> "$GITHUB_OUTPUT"
+
+      - name: 提前上传 ImageBuilder tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: h28k-imagebuilder-experiment-${{ steps.release.outputs.tag }}-${{ matrix.strategy }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-raw
+          path: |
+            source/${{ steps.ib.outputs.ib_tar }}
+            source/bin/targets/rockchip/armv8/profiles.json
+          retention-days: 14
+
+      - name: 校验 ImageBuilder metadata
+        working-directory: source
+        run: |
+          set -euo pipefail
+          ib_tar='${{ steps.ib.outputs.ib_tar }}'
+          rm -rf /tmp/h28k-ib-check
+          mkdir -p /tmp/h28k-ib-check
+          case "$ib_tar" in
+            *.tar.zst) tar --zstd -xf "$ib_tar" -C /tmp/h28k-ib-check --strip-components=1 ;;
+            *.tar.xz) tar -xJf "$ib_tar" -C /tmp/h28k-ib-check --strip-components=1 ;;
+            *.tar.gz|*.tgz) tar -xzf "$ib_tar" -C /tmp/h28k-ib-check --strip-components=1 ;;
+            *) echo "不支持的 ImageBuilder 格式：$ib_tar" >&2; exit 1 ;;
+          esac
+          profiles_json=/tmp/h28k-ib-check/profiles.json
+          if [ ! -f "$profiles_json" ]; then
+            echo 'tarball 根目录无 profiles.json，回退到构建产物' >&2
+            profiles_json=bin/targets/rockchip/armv8/profiles.json
+          fi
+          if [ ! -f "$profiles_json" ]; then
+            echo '未找到 profiles.json' >&2
+            echo 'tarball 根目录：' >&2
+            find /tmp/h28k-ib-check -maxdepth 2 -type f | sort | head -200 >&2
+            echo '构建目录：' >&2
+            find bin/targets/rockchip/armv8 -maxdepth 2 -type f | sort >&2
+            exit 1
+          fi
+          expected_abi='${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}'
+          ib_abi="$(jq -r '.linux_kernel.vermagic // empty' "$profiles_json")"
+          echo "profiles_json=$profiles_json"
+          echo "profiles_json_abi=$ib_abi"
+          if [ "$ib_abi" != "$expected_abi" ]; then
+            echo "ImageBuilder ABI 不匹配：$ib_abi != $expected_abi" >&2
+            exit 1
+          fi
+          if ! jq -e '.profiles.hinlink_h28k' "$profiles_json" >/dev/null; then
+            echo 'profiles.json 中缺少 H28K profile，可用 profile：' >&2
+            jq -r '.profiles | keys[]' "$profiles_json" >&2
+            exit 1
+          fi
+
+      - name: 可选试编固件
+        if: ${{ inputs.build_firmware_smoke_test }}
+        working-directory: source
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/h28k-ib-smoke
+          mkdir -p /tmp/h28k-ib-smoke
+          ib_tar='${{ steps.ib.outputs.ib_tar }}'
+          case "$ib_tar" in
+            *.tar.zst) tar --zstd -xf "$ib_tar" -C /tmp/h28k-ib-smoke --strip-components=1 ;;
+            *.tar.xz) tar -xJf "$ib_tar" -C /tmp/h28k-ib-smoke --strip-components=1 ;;
+            *.tar.gz|*.tgz) tar -xzf "$ib_tar" -C /tmp/h28k-ib-smoke --strip-components=1 ;;
+          esac
+          cd /tmp/h28k-ib-smoke
+          smoke_packages='${{ inputs.firmware_smoke_packages }}'
+          echo "firmware smoke packages: ${smoke_packages:-<empty>}"
+          make image PROFILE=hinlink_h28k PACKAGES="$smoke_packages"
+          ls -lh bin/targets/rockchip/armv8/*hinlink*h28k* || true
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 ImageBuilder Docker
+        working-directory: source
+        run: |
+          set -euo pipefail
+          rm -rf "$GITHUB_WORKSPACE/docker-context"
+          mkdir -p "$GITHUB_WORKSPACE/docker-context/imagebuilder"
+          ib_tar='${{ steps.ib.outputs.ib_tar }}'
+          case "$ib_tar" in
+            *.tar.zst) tar --zstd -xf "$ib_tar" -C "$GITHUB_WORKSPACE/docker-context/imagebuilder" --strip-components=1 ;;
+            *.tar.xz) tar -xJf "$ib_tar" -C "$GITHUB_WORKSPACE/docker-context/imagebuilder" --strip-components=1 ;;
+            *.tar.gz|*.tgz) tar -xzf "$ib_tar" -C "$GITHUB_WORKSPACE/docker-context/imagebuilder" --strip-components=1 ;;
+          esac
+          if [ ! -f "$GITHUB_WORKSPACE/docker-context/imagebuilder/profiles.json" ] && [ -f bin/targets/rockchip/armv8/profiles.json ]; then
+            cp -av bin/targets/rockchip/armv8/profiles.json "$GITHUB_WORKSPACE/docker-context/imagebuilder/profiles.json"
+          fi
+          test -f "$GITHUB_WORKSPACE/docker-context/imagebuilder/profiles.json"
+          cat > "$GITHUB_WORKSPACE/docker-context/Dockerfile" <<'EOF'
+          FROM ubuntu:24.04
+          ENV DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              bash build-essential ca-certificates cpio curl file gawk gettext-base git jq \
+              libncurses-dev libssl-dev python3 rsync unzip wget xz-utils zstd \
+              qemu-utils zlib1g-dev && \
+              rm -rf /var/lib/apt/lists/* && \
+              useradd -m -s /bin/bash builder
+          COPY --chown=builder:builder imagebuilder /home/builder/imagebuilder
+          USER builder
+          WORKDIR /home/builder/imagebuilder
+          ENTRYPOINT ["/bin/bash", "-lc"]
+          CMD ["make info"]
+          EOF
+          docker build \
+            --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+            --label org.opencontainers.image.version='${{ steps.release.outputs.tag }}' \
+            --label org.opencontainers.image.description="HINLINK H28K ImmortalWrt ImageBuilder ($STRATEGY, ABI ${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }})" \
+            -t "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}-${STRATEGY}" \
+            -t "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-${STRATEGY}" \
+            "$GITHUB_WORKSPACE/docker-context"
+          docker push "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}-${STRATEGY}"
+          docker push "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-${STRATEGY}"
+
+      - name: 上传 ImageBuilder tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: h28k-imagebuilder-experiment-${{ steps.release.outputs.tag }}-${{ matrix.strategy }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}
+          path: source/${{ steps.ib.outputs.ib_tar }}
+          retention-days: 14

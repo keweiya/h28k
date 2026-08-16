@@ -240,6 +240,7 @@ jobs:
                 /^(ATH_|B43_|MAC80211_|TAR_)/ { next }
                 /^(DEFAULT_|MODULE_DEFAULT_)/ { next }
                 /^(TARGET_|LINUX_|KERNEL_)/ { next }
+                /^(kmod-openvswitch-.*-intree|libgomp)$/ { next }
                 /^(dnsmasq_full_|knot-resolver_|luci-lib-nixio_)/ { next }
                 /^(trusted-firmware-a-|u-boot-)/ { next }
                 /^(iptables-zz-legacy|ip6tables-zz-legacy)$/ { next }

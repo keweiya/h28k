@@ -221,6 +221,13 @@ jobs:
 
           make defconfig >/dev/null
 
+          # Keep package exclusions in the versioned config. Target defaults
+          # may re-enable them during defconfig, so apply those exclusions to
+          # the package list after defconfig has completed.
+          sed -nE 's/^# CONFIG_PACKAGE_([^[:space:]]+) is not set$/\1/p' \
+            "$GITHUB_WORKSPACE/${{ steps.compat.outputs.firmware_packages_config }}" \
+            | sort -u > /tmp/config-disabled-packages.list
+
           {
             sed -nE 's/^CONFIG_PACKAGE_([^=]+)=(y|m)$/\1/p' .config
             grep -Ev '^[[:space:]]*(#|$|CONFIG_)' "$GITHUB_WORKSPACE/${{ steps.compat.outputs.firmware_packages_config }}" | grep -Ev '=' || true
@@ -232,6 +239,7 @@ jobs:
                 /^(TARGET_|LINUX_|KERNEL_)/ { next }
                 { print }
               ' \
+            | { grep -Fvx -f /tmp/config-disabled-packages.list || true; } \
             | sort -u > /tmp/base-packages.list
 
           echo '解析后的基础包：'

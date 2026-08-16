@@ -219,165 +219,27 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL '${{ steps.mirror.outputs.base_url }}/config.buildinfo' -o .config.buildinfo
-          # 实验不同精简策略。所有策略都必须保留官方 CONFIG_KERNEL_*，并通过严格 ABI 校验；
-          # 失败的策略会在 ABI 校验或 ImageBuilder/固件 smoke test 阶段直接失败。
-          case "$STRATEGY" in
-            kernel-strict)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_SDK=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-strict-nosdk)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-strict-no-per-device-rootfs)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_SDK=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-strict-nosdk-no-per-device-rootfs)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-strict-no-buildbot)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_SDK=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-strict-no-reproducible-debug-info)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_SDK=y$/ ||
-                /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
-                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              ;;
-            kernel-single-profile-abi-test)
-              awk '
-                /^CONFIG_TARGET_rockchip=y$/ ||
-                /^CONFIG_TARGET_rockchip_armv8=y$/ ||
-                /^CONFIG_ALL_KMODS=y$/ ||
-                /^CONFIG_ALL_NONSHARED=y$/ ||
-                /^CONFIG_DEVEL=y$/ ||
-                /^CONFIG_BUILDBOT=y$/ ||
-                /^CONFIG_IB=y$/ ||
-                /^CONFIG_SDK=y$/ ||
-                /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
-                /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
-                /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
-                /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
-                /^CONFIG_VERSION_REPO=/ ||
-                /^CONFIG_VERSION_DIST=/ ||
-                /^CONFIG_VERSIONOPT=y$/ ||
-                /^CONFIG_VERSION_FILENAMES=y$/
-              ' .config.buildinfo > .config.official
-              {
-                printf '%s\n' 'CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k=y'
-                printf '%s\n' 'CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k=""'
-                printf '%s\n' 'CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y'
-              } >> .config.official
-              ;;
-            *)
-              echo "Unknown STRATEGY=$STRATEGY" >&2
-              exit 1
-              ;;
-          esac
+          # kernel-strict only: keep official CONFIG_KERNEL_* and use strict ABI check.
+          awk '
+            /^CONFIG_TARGET_rockchip=y$/ ||
+            /^CONFIG_TARGET_rockchip_armv8=y$/ ||
+            /^CONFIG_TARGET_MULTI_PROFILE=y$/ ||
+            /^CONFIG_ALL_KMODS=y$/ ||
+            /^CONFIG_ALL_NONSHARED=y$/ ||
+            /^CONFIG_DEVEL=y$/ ||
+            /^CONFIG_BUILDBOT=y$/ ||
+            /^CONFIG_IB=y$/ ||
+            /^CONFIG_SDK=y$/ ||
+            /^CONFIG_TARGET_ALL_PROFILES=y$/ ||
+            /^CONFIG_TARGET_PER_DEVICE_ROOTFS=y$/ ||
+            /^CONFIG_REPRODUCIBLE_DEBUG_INFO=y$/ ||
+            /^CONFIG_KERNEL_[A-Za-z0-9_]+=/ ||
+            /^# CONFIG_KERNEL_[A-Za-z0-9_]+ is not set$/ ||
+            /^CONFIG_VERSION_REPO=/ ||
+            /^CONFIG_VERSION_DIST=/ ||
+            /^CONFIG_VERSIONOPT=y$/ ||
+            /^CONFIG_VERSION_FILENAMES=y$/
+          ' .config.buildinfo > .config.official
 
           cat .config.official "$GITHUB_WORKSPACE/config/h28k-imagebuilder.config" > .config
           make defconfig
@@ -455,8 +317,7 @@ jobs:
           end_ts="$(date +%s)"
           duration_sec="$((end_ts - start_ts))"
           echo "duration_sec=$duration_sec" >> "$GITHUB_OUTPUT"
-          printf '### ImageBuilder experiment result\n\n- strategy: `%s`\n- build duration: `%s` seconds (`%02d:%02d:%02d`)\n' \
-            "$STRATEGY" \
+          printf '### ImageBuilder build result\n\n- strategy: `kernel-strict`\n- build duration: `%s` seconds (`%02d:%02d:%02d`)\n' \
             "$duration_sec" \
             "$((duration_sec / 3600))" \
             "$(((duration_sec % 3600) / 60))" \
@@ -558,7 +419,7 @@ jobs:
       - name: 提前上传 ImageBuilder tarball
         uses: actions/upload-artifact@v4
         with:
-          name: h28k-imagebuilder-${{ steps.release.outputs.tag }}-${{ matrix.strategy }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-raw
+          name: h28k-imagebuilder-${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-raw
           path: |
             source/${{ steps.ib.outputs.ib_tar }}
             source/bin/targets/rockchip/armv8/profiles.json
@@ -665,20 +526,16 @@ jobs:
           docker build \
             --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
             --label org.opencontainers.image.version='${{ steps.release.outputs.tag }}' \
-            --label org.opencontainers.image.description="HINLINK H28K ImmortalWrt ImageBuilder ($STRATEGY, ABI ${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }})" \
-            -t "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}-${STRATEGY}" \
-            -t "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-${STRATEGY}" \
+            --label org.opencontainers.image.description="HINLINK H28K ImmortalWrt ImageBuilder (kernel-strict, ABI ${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }})" \
+            -t "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}" \
+            -t "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}" \
             "$GITHUB_WORKSPACE/docker-context"
-          docker push "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}-${STRATEGY}"
-          docker push "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}-${STRATEGY}"
-          if [ "$STRATEGY" = kernel-strict ]; then
-            docker tag "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}-${STRATEGY}" "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}"
-            docker push "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}"
-          fi
+          docker push "${IMAGE_NAME}:${{ steps.release.outputs.docker_tag }}"
+          docker push "${IMAGE_NAME}:${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}"
 
       - name: 上传 ImageBuilder tarball
         uses: actions/upload-artifact@v4
         with:
-          name: h28k-imagebuilder-${{ steps.release.outputs.tag }}-${{ matrix.strategy }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}
+          name: h28k-imagebuilder-${{ steps.release.outputs.tag }}-${{ steps.abi.outputs.abi || steps.prebuilt.outputs.abi }}
           path: source/${{ steps.ib.outputs.ib_tar }}
           retention-days: 14

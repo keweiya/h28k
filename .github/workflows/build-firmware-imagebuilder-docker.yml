@@ -219,16 +219,6 @@ jobs:
           ./scripts/feeds install -a >/dev/null 2>&1 || true
           cp "$GITHUB_WORKSPACE/${{ steps.compat.outputs.firmware_packages_config }}" .config
 
-          sed -i \
-            -e 's/^CONFIG_TARGET_MULTI_PROFILE=y/# CONFIG_TARGET_MULTI_PROFILE is not set/' \
-            -e 's/^CONFIG_TARGET_ALL_PROFILES=y/# CONFIG_TARGET_ALL_PROFILES is not set/' \
-            -e '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_/s/=y$/ is not set/' \
-            -e '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_/s/^CONFIG_/# CONFIG_/' \
-            .config
-          printf '\nCONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k=y\n' >> .config
-          printf 'CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k=""\n' >> .config
-          printf 'CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y\n' >> .config
-
           make defconfig >/dev/null
 
           {
@@ -240,10 +230,6 @@ jobs:
                 /^(ATH_|B43_|MAC80211_|TAR_)/ { next }
                 /^(DEFAULT_|MODULE_DEFAULT_)/ { next }
                 /^(TARGET_|LINUX_|KERNEL_)/ { next }
-                /^(kmod-openvswitch-.*-intree|libgomp)$/ { next }
-                /^(dnsmasq_full_|knot-resolver_|luci-lib-nixio_)/ { next }
-                /^(trusted-firmware-a-|u-boot-)/ { next }
-                /^(iptables-zz-legacy|ip6tables-zz-legacy)$/ { next }
                 { print }
               ' \
             | sort -u > /tmp/base-packages.list

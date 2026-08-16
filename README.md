@@ -28,7 +28,7 @@
 
 GitHub Actions 提供两个手动工作流：
 
-1. `build-imagebuilder-docker.yml`：基于官方 `config.buildinfo` 只添加 HINLINK H28K profile，构建纯净 ImageBuilder Docker，并校验内核 ABI 与官方版本一致。
+1. `build-imagebuilder-docker.yml`：基于官方 `config.buildinfo` 构建 HINLINK H28K ImageBuilder Docker，支持 `abi_strategy` 选择不同精简策略，并校验内核 ABI 与官方版本一致。
 2. `build-firmware-imagebuilder-docker.yml`：使用 ImageBuilder Docker 编译 H28K 固件；需要第三方插件时下载对应版本 SDK，按 `config/packages.conf` 编译 `.ipk` 后安装进固件。
 
 ## 构建配置

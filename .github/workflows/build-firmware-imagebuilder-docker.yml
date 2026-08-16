@@ -192,11 +192,63 @@ jobs:
           docker pull "$IMAGE_NAME"
 
       - name: 安装 SDK 依赖
-        if: ${{ inputs.include_third_party_pkgs }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq python3-pyelftools python3-pip rsync swig python3-dev python3-setuptools
+
+      - name: 准备 SDK 和解析固件包
+        run: |
+          set -euo pipefail
+          BASE_URL='${{ steps.mirror.outputs.base_url }}'
+          SDK_FILENAME=$(grep -E 'immortalwrt-sdk-.*rockchip-armv8.*' /tmp/sha256sums | awk '{print $2}' | sed 's/^\*//' | head -n1)
+          if [ -z "$SDK_FILENAME" ]; then
+            echo 'sha256sums 中未找到 SDK，无法解析固件包配置' >&2
+            exit 1
+          fi
+          echo "下载 SDK：${SDK_FILENAME}"
+          curl -fsSL --connect-timeout 10 --retry 2 "${BASE_URL}/${SDK_FILENAME}" -o /tmp/sdk_archive.tar
+
+          rm -rf /tmp/sdk
+          mkdir -p /tmp/sdk
+          tar -xf /tmp/sdk_archive.tar --strip-components=1 -C /tmp/sdk/
+          mkdir -p /tmp/sdk/package/custom /tmp/third-party-src
+
+          cd /tmp/sdk
+          ./scripts/feeds update -a >/dev/null 2>&1 || true
+          ./scripts/feeds install -a >/dev/null 2>&1 || true
+          cp "$GITHUB_WORKSPACE/${{ steps.compat.outputs.firmware_packages_config }}" .config
+
+          sed -i \
+            -e 's/^CONFIG_TARGET_MULTI_PROFILE=y/# CONFIG_TARGET_MULTI_PROFILE is not set/' \
+            -e 's/^CONFIG_TARGET_ALL_PROFILES=y/# CONFIG_TARGET_ALL_PROFILES is not set/' \
+            -e '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_/s/=y$/ is not set/' \
+            -e '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_/s/^CONFIG_/# CONFIG_/' \
+            .config
+          printf '\nCONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_h28k=y\n' >> .config
+          printf 'CONFIG_TARGET_DEVICE_PACKAGES_rockchip_armv8_DEVICE_hinlink_h28k=""\n' >> .config
+          printf 'CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y\n' >> .config
+
+          make defconfig >/dev/null
+
+          {
+            sed -nE 's/^CONFIG_PACKAGE_([^=]+)=(y|m)$/\1/p' .config
+            grep -Ev '^[[:space:]]*(#|$|CONFIG_)' "$GITHUB_WORKSPACE/${{ steps.compat.outputs.firmware_packages_config }}" | grep -Ev '=' || true
+          } \
+            | awk '
+                /(^|_)(INCLUDE|BUSYBOX_CONFIG)_/ { next }
+                /^(ATH_|B43_|MAC80211_|TAR_)/ { next }
+                /^(DEFAULT_|MODULE_DEFAULT_)/ { next }
+                /^(TARGET_|LINUX_|KERNEL_)/ { next }
+                /^(dnsmasq_full_|knot-resolver_|luci-lib-nixio_)/ { next }
+                /^(trusted-firmware-a-|u-boot-)/ { next }
+                /^(iptables-zz-legacy|ip6tables-zz-legacy)$/ { next }
+                { print }
+              ' \
+            | sort -u > /tmp/base-packages.list
+
+          echo '解析后的基础包：'
+          cat /tmp/base-packages.list
 
       - name: 编译第三方包
         if: ${{ inputs.include_third_party_pkgs }}
@@ -205,30 +257,9 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/extra-apks"
           : > /tmp/third-party-packages.list
           : > /tmp/third-party-build-failed.list
-          BASE_URL='${{ steps.mirror.outputs.base_url }}'
           THIRD_PARTY_FILE="$THIRD_PARTY_CONF"
           if [ ! -f "$THIRD_PARTY_FILE" ]; then
             echo "缺少第三方包配置：$THIRD_PARTY_FILE，跳过第三方包编译" >&2
-            exit 0
-          fi
-
-          SDK_FILENAME=$(grep -E 'immortalwrt-sdk-.*rockchip-armv8.*' /tmp/sha256sums | awk '{print $2}' | sed 's/^\*//' | head -n1)
-          if [ -z "$SDK_FILENAME" ]; then
-            echo 'sha256sums 中未找到 SDK，跳过第三方包编译' >&2
-            exit 0
-          fi
-          echo "下载 SDK：${SDK_FILENAME}"
-          if ! curl -fsSL --connect-timeout 10 --retry 2 "${BASE_URL}/${SDK_FILENAME}" -o /tmp/sdk_archive.tar; then
-            echo 'SDK 下载失败，跳过第三方包编译' >&2
-            echo 'sdk-download-failed' >> /tmp/third-party-build-failed.list
-            exit 0
-          fi
-
-          rm -rf /tmp/sdk
-          mkdir -p /tmp/sdk
-          if ! tar -xf /tmp/sdk_archive.tar --strip-components=1 -C /tmp/sdk/; then
-            echo 'SDK 解包失败，跳过第三方包编译' >&2
-            echo 'sdk-extract-failed' >> /tmp/third-party-build-failed.list
             exit 0
           fi
           mkdir -p /tmp/sdk/package/custom /tmp/third-party-src
@@ -296,8 +327,6 @@ jobs:
           printf '%s\n' "${CUSTOM_PKGS[@]}"
 
           cd /tmp/sdk
-          ./scripts/feeds update -a >/dev/null 2>&1 || true
-          ./scripts/feeds install -a >/dev/null 2>&1 || true
           for pkg in "${CUSTOM_PKGS[@]}"; do
             echo "CONFIG_PACKAGE_${pkg}=m" >> .config
           done
@@ -344,12 +373,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output files
-          BASE_PACKAGES="$(
-            {
-              sed -nE 's/^CONFIG_PACKAGE_([^=]+)=(y|m)$/\1/p' '${{ steps.compat.outputs.firmware_packages_config }}'
-              grep -Ev '^[[:space:]]*(#|$|CONFIG_)' '${{ steps.compat.outputs.firmware_packages_config }}' | grep -Ev '=' || true
-            } | sort -u | tr '\n' ' ' | xargs
-          )"
+          if [ ! -f /tmp/base-packages.list ]; then
+            echo '未生成基础包列表' >&2
+            exit 1
+          fi
+          BASE_PACKAGES="$(tr '\n' ' ' < /tmp/base-packages.list | xargs)"
           THIRD_PARTY_PACKAGES=""
           if [ '${{ inputs.include_third_party_pkgs }}' = 'true' ]; then
             if [ ! -f /tmp/third-party-packages.list ]; then

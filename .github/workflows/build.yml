@@ -155,18 +155,30 @@ jobs:
           find dl -size -1024c -print -delete
           du -sh dl
 
-      - name: 编译固件
+      - name: 编译固件（全速并行，只输出错误）
         working-directory: source
         timeout-minutes: 300
         run: |
-          make -j"$(nproc)" V=s 2>&1 | tee build.log
+          set -o pipefail
+          # 全速并行编译：完整日志写入 build.log，控制台只实时刷出错误/失败行
+          make -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed' || true
+          code=${PIPESTATUS[0]}
+          if [ "$code" -eq 0 ]; then
+            echo "=== 全速编译成功 ==="
+            exit 0
+          fi
+          echo "=== 全速编译失败（exit $code），日志尾部 100 行 ==="
+          tail -n 100 build.log || true
+          echo "=== 转单核详细模式重编译（V=s，完整日志）==="
+          make -j1 V=s 2>&1 | tee build-single.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            echo "=== Build failed, disk space ==="
+            echo "=== 单核重编译仍失败 ==="
             df -h /
-            tail -100 build.log
+            tail -n 200 build-single.log || true
             exit "$code"
           fi
+          echo "=== 单核重编译成功（并行编译为偶发抖动） ==="
 
       - name: 生成 ImageBuilder 工具包
         working-directory: source
@@ -253,6 +265,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 编译失败日志-${{ inputs.version }}
-          path: source/build.log
+          path: |
+            source/build.log
+            source/build-single.log
           if-no-files-found: ignore
           retention-days: 7

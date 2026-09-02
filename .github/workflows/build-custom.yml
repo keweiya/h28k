@@ -91,7 +91,7 @@ jobs:
             "$GITHUB_WORKSPACE/out" \
             "$PLUGINS_ARG"
 
-      - name: 统计已启用插件
+      - name: 生成 Release 总结信息
         run: |
           # 只统计官方插件源小节里 =y 的 luci-app-*（不含中文包/清单外/中文界面）
           plugins="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
@@ -100,6 +100,12 @@ jobs:
             echo "PLUGIN_NOTE=**已启用插件**：$plugins" >> "$GITHUB_ENV"
           else
             echo "PLUGIN_NOTE=已启用插件：无（纯净官方组件 + 中文界面）" >> "$GITHUB_ENV"
+          fi
+          if [[ -s out/failed-packages.txt ]]; then
+            failed="$(paste -sd' ' out/failed-packages.txt)"
+            echo "FAILED_NOTE=**⚠ 以下插件安装失败，已自动跳过**：$failed" >> "$GITHUB_ENV"
+          else
+            echo "FAILED_NOTE=全部插件安装成功" >> "$GITHUB_ENV"
           fi
 
       - name: 上传定制固件构件
@@ -123,6 +129,7 @@ jobs:
           - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
           - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
           - ${{ env.PLUGIN_NOTE }}
+          - ${{ env.FAILED_NOTE }}
           - **kmod 与官方源包**：组装时从官方软件源在线拉取，与官方 release 完全一致
 
           本附件为最新组装固件（覆盖基础固件）；ImageBuilder / rootfs.tar.gz 等附件由「H28K 固件全量构建」维护。"

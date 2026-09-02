@@ -87,12 +87,39 @@ fi
 packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 echo "=== 组装镜像（PROFILE=hinlink_h28k） ==="
 echo "    额外软件包: ${packages:-（无）}"
-make image \
-  PROFILE=hinlink_h28k \
-  PACKAGES="$packages" \
-  FILES="$ib_dir/files" \
-  ROOTFS_PARTSIZE="$rootfs_size" \
-  BIN_DIR="$(cd "$out_dir" && pwd)"
+
+run_make_image() {
+  make image \
+    PROFILE=hinlink_h28k \
+    PACKAGES="$1" \
+    FILES="$ib_dir/files" \
+    ROOTFS_PARTSIZE="$rootfs_size" \
+    BIN_DIR="$out_dir"
+}
+
+declare -a failed_pkgs=()
+good_pkgs="$packages"
+# 先整批安装；失败则逐个插件定位，跳过安装失败的，最后用成功集合重组镜像
+if ! run_make_image "$good_pkgs"; then
+  echo "=== 批量安装失败，转为逐个插件安装以定位失败项 ==="
+  good_pkgs=""
+  for p in $packages; do
+    echo "--- 尝试安装: $p ---"
+    if run_make_image "$good_pkgs $p"; then
+      good_pkgs="$good_pkgs $p"
+    else
+      echo "    ⚠ 安装失败，已跳过: $p"
+      failed_pkgs+=("$p")
+    fi
+  done
+  echo "=== 用成功集合重组最终镜像 ==="
+  run_make_image "$good_pkgs"
+fi
+
+if (("${#failed_pkgs[@]}")); then
+  printf '%s\n' "${failed_pkgs[@]}" > "$out_dir/failed-packages.txt"
+  echo "=== ⚠ 安装失败的插件（已跳过）: ${failed_pkgs[*]} ==="
+fi
 
 out_abs="$(cd "$out_dir" && pwd)"
 shopt -s nullglob

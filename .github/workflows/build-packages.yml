@@ -122,7 +122,7 @@ jobs:
             echo "built=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 编译插件
+      - name: 编译插件（全速并行，只输出错误）
         if: steps.plugins.outputs.built == 'true'
         working-directory: sdk
         run: |
@@ -131,13 +131,21 @@ jobs:
             echo "CONFIG_PACKAGE_${name}=y" >> .config
           done
           make defconfig
+          set -o pipefail
           for name in "${names[@]}"; do
             echo "=== 编译插件: $name ==="
-            make package/"$name"/compile -j"$(nproc)" V=s 2>&1 | tee -a build.log
+            make package/"$name"/compile -j"$(nproc)" 2>&1 | tee -a build.log | grep --line-buffered -iE 'error|failed' || true
             code=${PIPESTATUS[0]}
             if [ "$code" -ne 0 ]; then
-              tail -100 build.log
-              exit "$code"
+              echo "=== $name 并行编译失败（exit $code），转单核详细重试 ==="
+              make package/"$name"/compile -j1 V=s 2>&1 | tee -a build-single.log
+              code=${PIPESTATUS[0]}
+              if [ "$code" -ne 0 ]; then
+                echo "=== 插件 $name 编译失败 ==="
+                tail -n 200 build-single.log || true
+                exit "$code"
+              fi
+              echo "=== $name 单核重编译成功 ==="
             fi
           done
 
@@ -238,6 +246,16 @@ jobs:
           path: out/*sysupgrade*.img.gz
           retention-days: 30
 
+      - name: 生成 Release 总结信息
+        if: inputs.build_firmware
+        run: |
+          if [[ -s out/failed-packages.txt ]]; then
+            failed="$(paste -sd' ' out/failed-packages.txt)"
+            echo "FAILED_NOTE=**⚠ 以下插件安装失败，已自动跳过**：$failed" >> "$GITHUB_ENV"
+          else
+            echo "FAILED_NOTE=全部插件安装成功" >> "$GITHUB_ENV"
+          fi
+
       - name: 发布固件 Release（覆盖更新）
         if: inputs.build_firmware
         env:
@@ -253,6 +271,7 @@ jobs:
           - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
           - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
           - ${{ env.PLUGIN_NOTE }}
+          - ${{ env.FAILED_NOTE }}
           - **kmod 与官方源包**：组装时从官方软件源在线拉取，与官方 release 完全一致
 
           本工作流一次完成：SDK 编译插件 + ImageBuilder 组装；重复构建会覆盖更新本 Release。"

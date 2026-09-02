@@ -42,7 +42,6 @@ load_firmware_config() {
       value="$(trim "${BASH_REMATCH[1]}")"
     fi
     case "$key" in
-      default_series) default_series="$value" ;;
       supported_versions) read -r -a supported_versions <<< "$value" ;;
       lan_ip) lan_ip="$value" ;;
       password) password="$value" ;;
@@ -55,13 +54,10 @@ load_firmware_config() {
 
   # 已测试版本白名单：ABI 与补丁仅对这些版本验证过，构建必须从中选择
   (( ${#supported_versions[@]} >= 1 )) || fail "supported_versions must not be empty"
-  local v series_ok=false
+  local v
   for v in "${supported_versions[@]}"; do
     [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid supported version: $v"
-    [[ "$v" == "$default_series".* ]] && series_ok=true
   done
-  [[ "$series_ok" == true ]] ||
-    fail "default_series $default_series has no version in supported_versions"
 
   # 工作流输入覆盖（环境变量，留空 = 使用 conf 默认值）
   lan_ip="${CFG_LAN_IP:-$lan_ip}"

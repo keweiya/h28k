@@ -1,7 +1,9 @@
-name: 编译 HINLINK H28K 固件
+name: H28K 固件全量构建（源码编译 → 固件 + 自建 ImageBuilder）
 
 # 阶段 1：全量源码构建（官方源码 + H28K 补丁 + check-abi 门禁），
 # 产物 = sysupgrade 固件 + 自建 ImageBuilder，一起发布到 Release。
+# 与「H28K 固件快速组装」工作流的区别：本工作流从源码完整编译（1.5~3 小时），
+# 仅在官方发新版或手动需要时运行；日常出固件请用快速组装工作流。
 # 每周定时构建；该版本已发过 Release 时自动跳过。
 # 版本只能选 config/firmware.conf supported_versions 中的已测试版本（ABI 保证的前提）。
 
@@ -10,20 +12,16 @@ on:
     - cron: '23 21 * * 0'
   workflow_dispatch:
     inputs:
-      series:
-        description: '要构建的 ImmortalWrt 系列（all = 全部，各系列取已测试版本中最新的）'
+      version:
+        description: '要构建的 ImmortalWrt 版本（定时构建取每个系列最新的已测试版本）'
         type: choice
         required: true
-        default: all
+        default: 25.12.1
         options:
-          - all
-          - 24.10
-          - 25.12
-      exact_version:
-        description: '精确版本（可选，仅限已测试版本如 v24.10.6；填写后忽略系列选择）'
-        type: string
-        required: false
-        default: ''
+          - 25.12.1
+          - 25.12.0
+          - 24.10.6
+          - 24.10.5
       force_build:
         description: '强制重新构建（忽略"该版本已发布"自动跳过）'
         type: boolean
@@ -61,27 +59,26 @@ jobs:
     name: 解析构建矩阵
     runs-on: ubuntu-24.04
     outputs:
-      series: ${{ steps.resolve.outputs.series }}
+      versions: ${{ steps.resolve.outputs.versions }}
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
-      - name: 解析系列列表
+      - name: 解析版本列表
         id: resolve
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/resolve_series.sh" \
+          bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "${{ inputs.series || 'all' }}" \
-            "${{ inputs.exact_version }}" \
+            "${{ inputs.version }}" \
             "$GITHUB_OUTPUT"
 
   build:
-    name: 编译 ${{ matrix.series }} 系列固件
+    name: 编译 ${{ matrix.version }} 固件
     needs: matrix
     strategy:
       fail-fast: false
       matrix:
-        series: ${{ fromJSON(needs.matrix.outputs.series) }}
+        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -128,8 +125,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/select_release.sh" \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_OUTPUT" \
-            "${{ matrix.series }}" \
-            "${{ inputs.exact_version }}"
+            "${{ matrix.version }}"
           # 已构建自动跳过：该版本已发过固件 Release 且未强制重建时直接结束，
           # 避免定时构建重复编译同一版本。后续步骤均以 skip 输出为条件。
           if [[ "${{ inputs.force_build }}" != "true" ]]; then
@@ -153,16 +149,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: source/dl
-          key: h28k-dl-${{ matrix.series }}-${{ steps.release.outputs.version }}
+          key: h28k-dl-${{ steps.release.outputs.series }}-${{ steps.release.outputs.version }}
           restore-keys: |
-            h28k-dl-${{ matrix.series }}-
+            h28k-dl-${{ steps.release.outputs.series }}-
 
       - name: 应用 HINLINK H28K 补丁
         if: steps.release.outputs.skip != 'true'
         working-directory: source
         run: |
           bash "$GITHUB_WORKSPACE/scripts/apply_patches.sh" \
-            . "$GITHUB_WORKSPACE/patches/${{ matrix.series }}"
+            . "$GITHUB_WORKSPACE/patches/${{ steps.release.outputs.series }}"
 
       - name: 使用官方 feeds
         if: steps.release.outputs.skip != 'true'
@@ -286,7 +282,7 @@ jobs:
 
             - **编译日期**：${{ env.BUILD_DATE }}
             - **上游版本**：${{ steps.release.outputs.tag }} (${{ env.UPSTREAM_HASH }})
-            - **ImmortalWrt 系列**：${{ matrix.series }}
+            - **ImmortalWrt 系列**：${{ steps.release.outputs.series }}
             - **设备型号**：HINLINK H28K (RK3528)
             - **管理地址**：`${{ env.FIRMWARE_LAN_IP }}`
             - **root 密码**：`${{ env.FIRMWARE_PASSWORD }}`
@@ -297,7 +293,7 @@ jobs:
             source/bin/targets/rockchip/armv8/*rootfs.tar.gz
             ${{ env.IB_FILE }}
           # 25.12 为主力系列，其 Release 标记为仓库 latest
-          make_latest: ${{ matrix.series == '25.12' && 'true' || 'false' }}
+          make_latest: ${{ steps.release.outputs.series == '25.12' && 'true' || 'false' }}
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -306,7 +302,7 @@ jobs:
         if: failure() && steps.release.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: 编译失败日志-${{ matrix.series }}
+          name: 编译失败日志-${{ matrix.version }}
           path: source/build.log
           if-no-files-found: ignore
           retention-days: 7

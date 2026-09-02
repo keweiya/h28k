@@ -8,13 +8,13 @@ set -euo pipefail
 
 fail() { echo "error: $*" >&2; exit 1; }
 
-series="${1:-}"
+version="${1:-}"
 github_output="${2:-}"
 base_tag_input="${3:-}"
-[[ -n "$series" && -n "$github_output" ]] ||
-  fail "usage: $0 <series> <github-output> [base-release-tag]"
-[[ "$series" =~ ^(24\.10|25\.12)$ ]] ||
-  fail "unsupported release series: $series"
+[[ -n "$version" && -n "$github_output" ]] ||
+  fail "usage: $0 <version> <github-output> [base-release-tag]"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+  fail "invalid version: $version"
 
 asset_prefix="immortalwrt-imagebuilder-rockchip-armv8."
 
@@ -27,7 +27,7 @@ if [[ -n "$base_tag_input" ]]; then
 else
   rows="$(gh api --paginate "repos/{owner}/{repo}/releases" --jq '
     .[]
-    | select(.draft == false and (.tag_name | startswith("h28k-v'"$series"'.")))
+    | select(.draft == false and (.tag_name | startswith("h28k-v'"$version"'-")))
     | select(any(.assets[]; .name | startswith("'"$asset_prefix"'")))
     | [.tag_name,
        ([.assets[] | select(.name | startswith("'"$asset_prefix"'"))][0].browser_download_url)]

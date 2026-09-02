@@ -1,22 +1,25 @@
-name: 快速定制构建（ImageBuilder）
+name: H28K 固件快速组装（ImageBuilder 直接出固件，约 5 分钟）
 
 # 阶段 2：用基础 Release 附带的自建 ImageBuilder 分钟级组装定制固件。
-# 不编译任何源码，内核与 kmod 与基础构建完全一致（ABI 不变）。
-# 前提：对应系列的某个固件 Release 已附带 immortalwrt-imagebuilder-*.tar.xz
-# （由"编译 HINLINK H28K 固件"工作流生成）。
+# 与「H28K 固件全量构建」的区别：本工作流不编译任何源码，用现成 ImageBuilder
+# 组装（内核与全量构建完全一致，ABI 不变）；日常出固件用这个。
+# 前提：对应版本的某个固件 Release 已附带 immortalwrt-imagebuilder-*.tar.zst
+# （由「H28K 固件全量构建」工作流生成），插件包由「构建插件包」工作流提供。
 # 包列表与首启配置见 config/ib-packages.list 与 config/firmware.conf。
 
 on:
   workflow_dispatch:
     inputs:
-      series:
-        description: '基础固件系列（决定使用哪个 ImageBuilder）'
+      version:
+        description: '基于哪个版本的固件组装（决定使用哪个 ImageBuilder 与插件包）'
         type: choice
         required: true
-        default: 25.12
+        default: 25.12.1
         options:
-          - 24.10
-          - 25.12
+          - 25.12.1
+          - 25.12.0
+          - 24.10.6
+          - 24.10.5
       base_release:
         description: '基础 Release 标签（可选，如 h28k-v25.12.1-20260903，留空自动选最新含 ImageBuilder 的 Release）'
         type: string
@@ -69,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
-            "${{ inputs.series }}" \
+            "${{ inputs.version }}" \
             "$GITHUB_OUTPUT" \
             "${{ inputs.base_release }}"
 

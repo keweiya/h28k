@@ -36,27 +36,22 @@
 - 注意：不要填官方包的子包名（编译目标名对不上会失败）；kmod 一律不写在这里（由官方源在组装时提供，ABI 才一致）。
 - 插件更新：重跑「构建插件包」（约 15~30 分钟），无需重编固件。
 
-## config/ib-packages.list（官方源包开关清单，y/n 格式）
+## config/ib-packages.list（常用 LuCI 插件开关清单，y/n 格式）
 
-由 `scripts/fetch_official_packages.sh` 从官方源自动生成的**全部官方插件包目录**（3184 个，来自 packages/luci/routing/telephony 四个插件源），每行一个包：
+人工精选自官方源全部 166 个插件中的**常用 74 个**，每个插件下面紧跟它配对的中文包（`luci-i18n-*-zh-cn`，没有官方翻译的不配）。默认状态：
 
-```
-kmod-mt7921u=y          # 清单外小节：base/kmods 源的包
-wpad-openssl=y
-openssh-sftp-server=y
-464xlat=n
-6in4=n
-luci-app-docker=n
-luci-app-openclash=n
-...
-```
+| 默认 =y（进固件） | 说明 |
+| --- | --- |
+| `luci-i18n-base-zh-cn` | LuCI 中文界面（唯一默认开启的 luci 项） |
+| `kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server` | 设备基础组件（文件末尾"清单外"小节） |
 
-- **`=y` 安装进固件，`=n` 不安装**；默认只有 kmod-mt7921u、wpad-openssl、openssh-sftp-server 三个是 `=y`，其余全部 `=n`。
-- 启用想要的插件：把对应行改成 `=y`（用编辑器搜索，如 `luci-app-docker`），下次「快速定制构建」自动带上，无需重编固件。
-- 重新生成/换版本生成：`bash scripts/fetch_official_packages.sh <版本> config/ib-packages.list`——**已启用（=y）的会保留**，新增包默认 `=n`。
-- 覆盖范围：四个插件源（packages/luci/routing/telephony）；base 核心与 kmod 不在目录里，需要时手动加在文件末尾"清单外的官方包"小节（如 `kmod-usb-storage=y`）。
-- 源码第三方插件**不要**写在这里（由 source-plugins.list 自动带入）。
-- 组装时 opkg/apk 会自动从官方在线源拉取所选包及其依赖（含 kmod），与官方 release 完全一致——这是 ABI 保证的一部分。
+其余插件全部 `=n`，按分类分组：科学上网（homeproxy/passwall/openclash/v2raya/dae 等）、文件共享 NAS（samba4/nfs/syncthing）、下载（qbittorrent/transmission/aria2/rclone）、Docker（docker/dockerman/lxc）、内网穿透（frpc/frps/n2n/zerotier/ttyd）、VPN（openvpn/ipsec/ocserv）、网络优化（upnp/sqm/banip/smartdns/mwan3/appfilter 等）、无线（travelmate/usteer/dawn）、监控磁盘（nlbwmon/statistics/netdata/diskman）、外设 IoT（打印机/串口/摄像头/mosquitto/vlmcsd/wol/wechatpush）。
+
+- **启用插件**：把对应行改成 `=y`，建议把它配对的 `luci-i18n-*-zh-cn` 一并 `=y`（中文界面），下次「快速定制构建」自动带上。
+- **找冷门插件**：其余 90+ 个官方插件没进清单；要找全量，运行 `bash scripts/fetch_official_packages.sh 25.12.1 full.txt` 生成 3184 个的完整目录后搜索（生成到别的文件，别覆盖本清单；想启用就把名字抄进来）。
+- **重新生成/换版本**：同上命令，`ib-packages.list` 里已启用的 `=y` 会自动保留。
+- 源码第三方插件（nikki 等）**不要**写在这里（由 source-plugins.list 自动带入）。
+- 组装时 opkg/apk 自动从官方在线源拉取所选包及依赖（含 kmod），与官方 release 一致——ABI 保证的一部分。
 
 ## 添加自定义插件要改几处？
 

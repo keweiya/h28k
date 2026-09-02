@@ -272,6 +272,7 @@ jobs:
           name: HINLINK H28K 固件-${{ steps.release.outputs.tag }}
           path: |
             source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz
+            source/bin/targets/rockchip/armv8/*rootfs.tar.gz
             ${{ env.IB_FILE }}
           retention-days: 30
 
@@ -294,6 +295,7 @@ jobs:
             附件中的 `immortalwrt-imagebuilder-*.tar.xz` 为自建 ImageBuilder，可用于"快速定制构建"工作流，分钟级组装不同软件包组合的固件（内核与 ABI 完全一致）。
           files: |
             source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz
+            source/bin/targets/rockchip/armv8/*rootfs.tar.gz
             ${{ env.IB_FILE }}
           # 25.12 为主力系列，其 Release 标记为仓库 latest
           make_latest: ${{ matrix.series == '25.12' && 'true' || 'false' }}

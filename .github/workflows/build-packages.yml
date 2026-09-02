@@ -21,6 +21,30 @@ on:
         type: boolean
         required: true
         default: true
+      build_firmware:
+        description: '编译完插件后立即用 ImageBuilder 组装固件（一步出完整固件，需同时开启发布）'
+        type: boolean
+        required: false
+        default: false
+      lan_ip:
+        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值，仅组装固件时生效）'
+        type: string
+        required: false
+        default: ''
+      password:
+        description: 'root 密码（留空使用 config/firmware.conf 的默认值，仅组装固件时生效）'
+        type: string
+        required: false
+        default: ''
+      rootfs_size:
+        description: '固件根目录大小（MiB，仅组装固件时生效）'
+        type: choice
+        required: false
+        default: '2048'
+        options:
+          - '512'
+          - '1024'
+          - '2048'
 
 permissions:
   contents: write
@@ -37,6 +61,13 @@ jobs:
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
+
+      - name: 检查参数组合
+        run: |
+          if [[ "${{ inputs.build_firmware }}" == "true" && "${{ inputs.publish_release }}" != "true" ]]; then
+            echo "build_firmware 需要同时开启 publish_release（固件组装依赖已发布的插件包 Release）"
+            exit 1
+          fi
 
       - name: 选择目标版本
         id: release
@@ -99,17 +130,18 @@ jobs:
             fi
           done
 
-      - name: 收集插件 ipk
+      - name: 收集插件包
         run: |
           mkdir stage
+          # 24.10 产出 .ipk（opkg），25.12 产出 .apk（apk），按版本自动匹配；
           # kmod 由官方源在组装固件时提供，SDK 编译的 kmod 不收集，避免版本混淆
-          find sdk/bin/packages -name '*.ipk' ! -name 'kmod-*' -exec cp {} stage/ \;
-          count=$(find stage -name '*.ipk' | wc -l)
+          find sdk/bin/packages \( -name '*.ipk' -o -name '*.apk' \) ! -name 'kmod-*' -exec cp {} stage/ \;
+          count=$(find stage \( -name '*.ipk' -o -name '*.apk' \) | wc -l)
           if [ "$count" -eq 0 ]; then
-            echo "没有收集到任何 ipk"
+            echo "没有收集到任何插件包"
             exit 1
           fi
-          echo "共收集 $count 个 ipk："
+          echo "共收集 $count 个插件包："
           ls -lh stage/
           tar -czf "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" -C stage .
 
@@ -129,6 +161,58 @@ jobs:
           PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}-$PKG_DATE"
           gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
             --title "H28K 插件包 v${{ steps.release.outputs.version }} ($PKG_DATE)" \
-            --notes "基于官方 SDK 编译的第三方插件 ipk（$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ') 及依赖）。
+            --notes "基于官方 SDK 编译的第三方插件（$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ') 及依赖）。
           - 供「快速定制构建」工作流注入 ImageBuilder；kmod 由官方源在组装时提供
           - 基于上游 ${{ steps.release.outputs.tag }}"
+
+      - name: 解析基础 Release（ImageBuilder）
+        if: inputs.build_firmware
+        id: base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
+            "${{ inputs.series }}" "$GITHUB_OUTPUT" ""
+
+      - name: 下载 ImageBuilder
+        if: inputs.build_firmware
+        run: |
+          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
+          ls -lh ib.tar.xz
+
+      - name: 组装完整固件
+        if: inputs.build_firmware
+        env:
+          CFG_LAN_IP: ${{ inputs.lan_ip }}
+          CFG_PASSWORD: ${{ inputs.password }}
+          CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
+        run: |
+          mkdir out
+          # 直接使用本次编译出的插件包（无需再从 Release 下载）
+          bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
+            ib.tar.xz \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            "$GITHUB_WORKSPACE/out" \
+            "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz"
+
+      - name: 上传固件构件
+        if: inputs.build_firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: H28K 定制固件-基于v${{ steps.release.outputs.version }}
+          path: out/*sysupgrade*.img.gz
+          retention-days: 30
+
+      - name: 发布固件 Release
+        if: inputs.build_firmware
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FW_TAG="h28k-custom-v${{ steps.release.outputs.version }}-$(TZ=Asia/Hong_Kong date +'%Y%m%d%H%M%S')"
+          gh release create "$FW_TAG" out/*sysupgrade*.img.gz \
+            --title "H28K 定制固件（基于 v${{ steps.release.outputs.version }}）" \
+            --notes "本插件包工作流一次完成：SDK 编译插件 + ImageBuilder 组装。
+          - 插件：$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ')（ib-packages.list 全量清单见仓库）
+          - 内核与上游 ${{ steps.release.outputs.tag }} 完全一致（ABI 不变）
+          - 管理地址/root 密码见本次运行输入"

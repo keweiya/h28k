@@ -41,12 +41,12 @@ ib_dir="$(find "$work_dir" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*
 cd "$ib_dir"
 
 if [[ -n "$plugins_tarball" ]]; then
-  echo "=== 注入插件包 ipk ==="
+  echo "=== 注入插件包（ipk/apk 自动匹配） ==="
   plugins_dir="$work_dir/plugins"
   mkdir -p "$plugins_dir"
   tar -xzf "$plugins_tarball" -C "$plugins_dir"
-  find "$plugins_dir" -name '*.ipk' -exec cp -f {} "$ib_dir/packages/" \;
-  ipk_num="$(find "$ib_dir/packages" -maxdepth 1 -name '*.ipk' | wc -l)"
+  find "$plugins_dir" \( -name '*.ipk' -o -name '*.apk' \) -exec cp -f {} "$ib_dir/packages/" \;
+  ipk_num="$(find "$ib_dir/packages" \( -name '*.ipk' -o -name '*.apk' \) | wc -l)"
   echo "    ImageBuilder 本地包数量: $ipk_num"
 fi
 

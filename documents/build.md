@@ -25,9 +25,13 @@
 
 | Release 标签 | 生成者 | 附件 | 保留策略 |
 | --- | --- | --- | --- |
-| `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**）② 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz` | 每系列保留最近 3 个 |
-| `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的 `luci-app-nikki`、`nikki`（mihomo 核心）、`luci-theme-fluent` 及其用户态依赖 ipk（不含 kmod） | 保留最近 3 个 |
-| `h28k-custom-<基础标签>-<时间>` | 阶段 2（可选发布） | 定制固件 `*-hinlink_h28k-sysupgrade.img.gz`（基础 + 插件 + 你的参数） | 保留最近 3 个 |
+| `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**；如配方支持会有 ext4 变体）② `*-rootfs.tar.gz` 根目录 tar 包（不含内核，可直接用于 LXC/容器）③ 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz` | 每系列保留最近 3 个 |
+| `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的 `luci-app-nikki`、`nikki`（mihomo 核心）、`luci-theme-fluent` 及其用户态依赖（24.10 为 .ipk，25.12 为 .apk，自动匹配；不含 kmod） | 保留最近 3 个 |
+| `h28k-custom-<基础标签>-<时间>` | 阶段 2 / 插件包工作流的固件开关 | 定制固件 `*-hinlink_h28k-sysupgrade.img.gz`（基础 + 插件 + 你的参数） | 保留最近 3 个 |
+
+关于格式：24.10.x 使用 opkg/ipk，25.12.x 已切换到 apk/apk。插件包工作流收集哪种格式取决于该版本 SDK 的产出，组装时也由对应版本的包管理器安装，全程无需人工区分。
+
+关于 ext4：`CONFIG_TARGET_ROOTFS_EXT4FS` 已开启，ext4 变体是否产出取决于 rockchip 的 image 配方（官方 rockchip 历来只发 squashfs），构建产物里出现 `*ext4*sysupgrade.img.gz` 即可用，刷写方式与 squashfs 相同；没有出现说明配方不支持。ext4/rootfs.tar.gz 均为镜像组装选项，不影响内核与 ABI。
 
 组装阶段 2 固件时，kmod（如 nikki 依赖的 kmod-tun、kmod-nft-tproxy）由官方软件源在线提供——与官方 release 完全一致，这是 ABI 保证的一部分；插件包 Release 里刻意不放 kmod。
 
@@ -36,7 +40,7 @@
 | 工作流 | 触发方式 | 耗时（量级） |
 | --- | --- | --- |
 | 编译 HINLINK H28K 固件（build.yml） | 每周日定时 + 手动 | 全新 1.5~3h，版本已发布则秒级跳过 |
-| 构建插件包（build-packages.yml） | 手动 | 15~30 分钟 |
+| 构建插件包（build-packages.yml） | 手动 | 15~30 分钟；开"立即组装固件"再加约 5 分钟 |
 | 快速定制构建（build-custom.yml） | 手动 | ~5 分钟 |
 | 清理历史 Release | 每周日定时 + 手动 | 秒级 |
 

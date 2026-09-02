@@ -1,5 +1,6 @@
 # 快速定制构建（build-custom 工作流）在设备默认包之上追加安装的软件包，每行一个。
-# 这些包来自自建 ImageBuilder（含阶段 1 构建时编译的 nikki/fluent）和官方软件源。
+# 包来源：插件包 Release（SDK 编译的 nikki/fluent，24.10 为 .ipk、25.12 为 .apk，自动匹配）
+# 与官方软件源（组装时联网拉取 kmod 和官方包）。
 # 注意：kmod 只能选择官方源已有的包，且与基础构建的内核 ABI 一致。
 # 如需替换默认 wpad：添加 "-wpad-basic-mbedtls" 和 "wpad-openssl" 两行（若 IB 不支持
 # 负号移除会报错，此时删掉这两行即可，默认 wpad-basic 同样支持 MT7921U）。

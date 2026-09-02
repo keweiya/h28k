@@ -25,6 +25,16 @@ git clone --depth=1 https://github.com/LazuliKao/luci-theme-fluent.git package/l
 
 这些包由 SDK 编译成 ipk 并发布到插件包 Release（`h28k-packages-*`），**阶段 1 全量构建不再使用本文件**——第三方插件更新只需重跑插件包工作流，无需重编固件。
 
+## 添加自定义插件
+
+- **官方源已有的包**（如 `dockerd`、`qemu-ga`）：只需加入 `config/ib-packages.list`，阶段 2 组装时自动从官方源安装。
+- **源码插件（官方源没有，如新的第三方 LuCI 应用）**：三处配置，缺一不可——
+  1. `config/packages.conf`：加一行 `git clone`（插件源码仓库，克隆到 SDK 源码树）
+  2. `config/sdk-packages.list`：加包名（`make package/<名称>/compile` 的目标名，注意不能用官方包的子包名）
+  3. `config/ib-packages.list`：加包名（阶段 2 装进固件）
+  
+  然后重跑「构建插件包」（可勾选"编译完插件后立即组装固件"一步出固件），或再单独跑「快速定制构建」。
+
 ## config/sdk-packages.list（需要 SDK 编译的插件名）
 
 「构建插件包」工作流实际编译的软件包名，每行一个（即 `make package/<名称>/compile` 的目标名）。当前为 `luci-app-nikki`、`luci-theme-fluent`。注意：

@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '要构建的 ImmortalWrt 版本（定时构建取每个系列最新的已测试版本）'
+        description: '要构建的 ImmortalWrt 版本'
         type: choice
         required: true
         default: 25.12.1
@@ -23,22 +23,22 @@ on:
           - 24.10.6
           - 24.10.5
       force_build:
-        description: '强制重新构建（忽略"该版本已发布"自动跳过）'
+        description: '强制重新构建'
         type: boolean
         required: false
         default: false
       lan_ip:
-        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值）'
+        description: 'LAN 管理地址'
         type: string
         required: false
-        default: ''
+        default: '192.168.100.1'
       password:
-        description: 'root 密码（留空使用 config/firmware.conf 的默认值）'
+        description: 'root 密码'
         type: string
         required: false
-        default: ''
+        default: 'password'
       rootfs_size:
-        description: '固件根目录大小（MiB，可选 512M / 1G / 2G）'
+        description: '固件根目录大小'
         type: choice
         required: true
         default: '2048'

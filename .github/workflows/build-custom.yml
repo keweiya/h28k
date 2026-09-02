@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '基于哪个版本的固件组装（决定使用哪个 ImageBuilder 与插件包）'
+        description: '基于哪个版本的固件组装'
         type: choice
         required: true
         default: 25.12.1
@@ -21,27 +21,27 @@ on:
           - 24.10.6
           - 24.10.5
       base_release:
-        description: '基础 Release 标签（可选，如 h28k-v25.12.1-20260903，留空自动选最新含 ImageBuilder 的 Release）'
+        description: '基础 Release 标签，留空自动选择'
         type: string
         required: false
         default: ''
       publish_release:
-        description: '发布为 Release（关闭时仅上传 Artifact，避免 Release 列表膨胀）'
+        description: '发布为 Release'
         type: boolean
         required: false
         default: false
       lan_ip:
-        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值）'
+        description: 'LAN 管理地址'
         type: string
         required: false
-        default: ''
+        default: '192.168.100.1'
       password:
-        description: 'root 密码（留空使用 config/firmware.conf 的默认值）'
+        description: 'root 密码'
         type: string
         required: false
-        default: ''
+        default: 'password'
       rootfs_size:
-        description: '固件根目录大小（MiB，可选 512M / 1G / 2G）'
+        description: '固件根目录大小'
         type: choice
         required: true
         default: '2048'

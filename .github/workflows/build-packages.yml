@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '目标 ImmortalWrt 版本（决定使用哪个官方 SDK）'
+        description: '目标 ImmortalWrt 版本'
         type: choice
         required: true
         default: 25.12.1
@@ -19,27 +19,27 @@ on:
           - 24.10.6
           - 24.10.5
       publish_release:
-        description: '发布为 Release（长期保存，供快速定制构建使用）'
+        description: '发布为 Release'
         type: boolean
         required: true
         default: true
       build_firmware:
-        description: '编译完插件后立即用 ImageBuilder 组装固件（一步出完整固件，需同时开启发布）'
+        description: '编译完插件后立即组装固件'
         type: boolean
         required: false
         default: false
       lan_ip:
-        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值，仅组装固件时生效）'
+        description: '组装固件时的 LAN 管理地址'
         type: string
         required: false
-        default: ''
+        default: '192.168.100.1'
       password:
-        description: 'root 密码（留空使用 config/firmware.conf 的默认值，仅组装固件时生效）'
+        description: '组装固件时的 root 密码'
         type: string
         required: false
-        default: ''
+        default: 'password'
       rootfs_size:
-        description: '固件根目录大小（MiB，仅组装固件时生效）'
+        description: '组装固件时的根目录大小'
         type: choice
         required: false
         default: '2048'

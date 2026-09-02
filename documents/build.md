@@ -1,30 +1,44 @@
 # 构建说明
 
-## 两段式构建
+## 三段式构建
 
 ```
 阶段 1 · 全量源码构建（build.yml）
   官方源码 + H28K 补丁全量编译 → check-abi 门禁
-  → Release：sysupgrade 固件 + 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
+  → Release：基础固件（不含第三方插件）+ 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
   耗时 1.5~3 小时；仅在官方发新版或手动触发时需要执行
 
+插件包 · SDK 独立编译（build-packages.yml）
+  官方 SDK（与固件同版本、同 musl ABI）编译 config/sdk-packages.list 里的源码插件
+  → Release 长期保存 ipk 集合（h28k-packages-v<版本>.tar.gz）
+  耗时约 15~30 分钟；nikki 等插件更新时只需重跑这个，无需重编固件
+
 阶段 2 · 快速定制构建（build-custom.yml）
-  下载自建 ImageBuilder → 注入 IP/密码/主题 → 按 config/ib-packages.list 装包
+  下载自建 ImageBuilder + 匹配版本的插件包 ipk → 注入 IP/密码/主题/软件包
   → make image 组装 → 定制 sysupgrade 固件
   耗时约 5 分钟；改包组合、迭代配置用这个
 ```
 
-两段的内核和 kmod 完全相同（阶段 2 不编译任何源码），ABI 一致。为什么必须用**自建** ImageBuilder：官方 IB 没有 `hinlink_h28k` 设备与 H28K 的 DTB/u-boot，预编译内核也无法打补丁重建。
+所有产物内核和 kmod 完全相同（阶段 2 不编译任何源码，插件 ipk 与固件同 ABI），ABI 一致。为什么必须用**自建** ImageBuilder：官方 IB 没有 `hinlink_h28k` 设备与 H28K 的 DTB/u-boot，预编译内核也无法打补丁重建。
 
-阶段 1 的产物同时发布固件与 ImageBuilder 附件，因此**每次官方点版本更新只需跑一次阶段 1**，之后的定制都走阶段 2。
+## Release 结构总览
+
+| Release 标签 | 生成者 | 附件 | 保留策略 |
+| --- | --- | --- | --- |
+| `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**）② 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz` | 每系列保留最近 3 个 |
+| `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的 `luci-app-nikki`、`nikki`（mihomo 核心）、`luci-theme-fluent` 及其用户态依赖 ipk（不含 kmod） | 保留最近 3 个 |
+| `h28k-custom-<基础标签>-<时间>` | 阶段 2（可选发布） | 定制固件 `*-hinlink_h28k-sysupgrade.img.gz`（基础 + 插件 + 你的参数） | 保留最近 3 个 |
+
+组装阶段 2 固件时，kmod（如 nikki 依赖的 kmod-tun、kmod-nft-tproxy）由官方软件源在线提供——与官方 release 完全一致，这是 ABI 保证的一部分；插件包 Release 里刻意不放 kmod。
 
 ## 工作流总览
 
-| 工作流 | 触发方式 | 作用 | 耗时（量级） |
-| --- | --- | --- | --- |
-| 编译 HINLINK H28K 固件（build.yml） | 每周日定时 + 手动 | 阶段 1：全量源码构建，同版本已发布则自动跳过 | 全新 1.5~3h，跳过时秒级 |
-| 快速定制构建（build-custom.yml） | 手动 | 阶段 2：用自建 ImageBuilder 组装定制固件 | ~5 分钟 |
-| 清理历史 Release | 每周日定时 + 手动 | 每个系列与定制构建各保留最近 N 个 Release | 秒级 |
+| 工作流 | 触发方式 | 耗时（量级） |
+| --- | --- | --- |
+| 编译 HINLINK H28K 固件（build.yml） | 每周日定时 + 手动 | 全新 1.5~3h，版本已发布则秒级跳过 |
+| 构建插件包（build-packages.yml） | 手动 | 15~30 分钟 |
+| 快速定制构建（build-custom.yml） | 手动 | ~5 分钟 |
+| 清理历史 Release | 每周日定时 + 手动 | 秒级 |
 
 运行器统一使用 GitHub 托管 `ubuntu-24.04`。全量构建在公开仓库免费，私有仓库消耗 Actions 额度。
 
@@ -119,7 +133,7 @@ curl -fsSL "https://downloads.immortalwrt.org/releases/$version/targets/rockchip
 (cd source && ./scripts/feeds update -a && ./scripts/feeds install -a)
 
 # 5. 构建配置 + 内核配置
-bash scripts/build_config.sh prepare source config/firmware.conf config/packages.conf env.file
+bash scripts/build_config.sh prepare source config/firmware.conf "" env.file
 bash scripts/prepare_kernel_config.sh source config/firmware.conf "$version" "$series" config/hinlink-h28k.config
 
 # 6. 下载 + 编译

@@ -45,21 +45,26 @@
 
 ## 使用
 
-本仓库采用**两段式构建**：
+本仓库采用**三段式构建**（基础固件 / 插件包 / 定制固件分离，插件更新无需全量重编）：
 
 ```
 阶段 1 · 全量源码构建（慢，1.5~3 小时，仅在官方发新版或手动触发时）
-  编译 HINLINK H28K 固件工作流：全量编译 → check-abi 门禁
-  → Release 发布 sysupgrade 固件 + 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
+  编译 HINLINK H28K 固件：全量编译 → check-abi 门禁
+  → Release：基础固件（不含第三方插件）+ 自建 ImageBuilder
   定时构建发现该版本已发过 Release 会自动跳过（可传 force_build 强制重建）
 
+插件包 · SDK 独立编译（约 15~30 分钟，插件更新时手动触发）
+  构建插件包工作流：官方 SDK 编译 nikki / fluent 主题等源码插件
+  → Release 长期保存 ipk 集合（h28k-packages-v<版本>.tar.gz）
+
 阶段 2 · 快速定制构建（快，约 5 分钟，随时手动触发）
-  快速定制构建工作流：下载自建 ImageBuilder → 注入 IP/密码/主题与软件包
-  → make image 组装 → 内核与阶段 1 完全一致，ABI 不变
+  快速定制构建工作流：下载自建 ImageBuilder + 匹配版本的插件包 ipk
+  → 注入 IP/密码/主题/软件包 → make image 组装 → ABI 与阶段 1 完全一致
 ```
 
 - **阶段 1**：Actions → 编译 HINLINK H28K 固件 → 选系列（`all` / `24.10` / `25.12`），可选填精确版本、LAN 地址、root 密码、根目录大小（512M/1G/2G）。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
-- **阶段 2**：Actions → 快速定制构建（ImageBuilder）→ 选基础系列/Release，改 `config/ib-packages.list` 即可换软件包组合。
+- **插件包**：Actions → 构建插件包 → 选系列。nikki / fluent 主题等源码插件用官方 SDK 单独编译并长期保存到 Release；nikki 更新时只需重跑这个（约 15~30 分钟），不用重编固件。
+- **阶段 2**：Actions → 快速定制构建（ImageBuilder）→ 选基础系列/Release，改 `config/ib-packages.list` 即可换软件包组合。**日常使用的固件来自这里**（基础固件不含第三方插件）。
 
 | 文档 | 内容 |
 | --- | --- |
@@ -76,7 +81,8 @@ h28k-openwrt/
 ├── documents/                       # 分册文档
 ├── config/
 │   ├── firmware.conf                # 初始化参数（已测试版本白名单、LAN IP、密码、根目录大小、主题、ABI 开关）
-│   ├── packages.conf                # 阶段 1 额外 git clone 软件包（nikki、fluent 主题）
+│   ├── packages.conf                # 插件源码 git clone 列表（仅「构建插件包」工作流使用）
+│   ├── sdk-packages.list            # 需要 SDK 源码编译的第三方插件名（nikki、fluent）
 │   ├── ib-packages.list             # 阶段 2 快速定制构建的追加软件包列表
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
 ├── patches/
@@ -86,23 +92,23 @@ h28k-openwrt/
 │   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
 │   ├── resolve_series.sh            # 手动参数 → 构建矩阵系列列表
 │   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希
-│   ├── select_ib.sh                 # 选最新带自建 ImageBuilder 附件的 Release
+│   ├── select_sdk.sh                # 解析官方 SDK 下载地址
+│   ├── select_ib.sh                 # 选基础 Release（IB 附件 + 匹配版本的插件包附件）
 │   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小）
 │   ├── apply_patches.sh             # 按字典序应用系列补丁
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
-│   └── build_config.sh              # 参数注入、官方 kmod 源启用、ABI 校验
+│   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
     ├── build.yml                    # 阶段 1：全量源码构建（定时 + 手动，系列矩阵）
+    ├── build-packages.yml           # 插件包：官方 SDK 编译第三方插件 → Release 长期保存
     ├── build-custom.yml             # 阶段 2：快速定制构建（分钟级）
-    └── delete-older-releases.yml    # 按系列保留最近 N 个 Release
+    └── delete-older-releases.yml    # 各类 Release 分别保留最近 N 个
 ```
 
-## 默认组件
+## 固件组件
 
-- `luci-theme-fluent`
-- `luci-app-nikki`
-- `kmod-mt7921u`
-- `openssh-sftp-server`
+- **基础固件**（阶段 1 Release）：`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server` 等官方源组件，**不含第三方插件**
+- **定制固件**（阶段 2 产物，日常使用推荐）：基础固件 + `luci-app-nikki`、`luci-theme-fluent`（ipk 来自插件包 Release）+ `config/ib-packages.list` 所列包
 
 ## 设备信息
 

@@ -14,8 +14,9 @@ ib_tarball="${1:-}"
 config_file="${2:-}"
 packages_list="${3:-}"
 out_dir="${4:-}"
+plugins_tarball="${5:-}"
 [[ -n "$ib_tarball" && -n "$config_file" && -n "$packages_list" && -n "$out_dir" ]] ||
-  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir>"
+  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> [plugins-tarball]"
 [[ -f "$ib_tarball" ]] || fail "ImageBuilder tarball not found: $ib_tarball"
 [[ -f "$packages_list" ]] || fail "package list not found: $packages_list"
 
@@ -25,6 +26,10 @@ load_firmware_config "$config_file"
 [[ -d "$out_dir" ]] || mkdir -p "$out_dir"
 packages_list="$(cd "$(dirname -- "$packages_list")" && pwd)/$(basename -- "$packages_list")"
 out_dir="$(cd -- "$out_dir" && pwd)"
+if [[ -n "$plugins_tarball" ]]; then
+  [[ -f "$plugins_tarball" ]] || fail "plugins tarball not found: $plugins_tarball"
+  plugins_tarball="$(cd "$(dirname -- "$plugins_tarball")" && pwd)/$(basename -- "$plugins_tarball")"
+fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
@@ -34,6 +39,16 @@ tar -xJf "$ib_tarball" -C "$work_dir"
 ib_dir="$(find "$work_dir" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)"
 [[ -n "$ib_dir" ]] || fail "ImageBuilder directory not found in tarball"
 cd "$ib_dir"
+
+if [[ -n "$plugins_tarball" ]]; then
+  echo "=== 注入插件包 ipk ==="
+  plugins_dir="$work_dir/plugins"
+  mkdir -p "$plugins_dir"
+  tar -xzf "$plugins_tarball" -C "$plugins_dir"
+  find "$plugins_dir" -name '*.ipk' -exec cp -f {} "$ib_dir/packages/" \;
+  ipk_num="$(find "$ib_dir/packages" -maxdepth 1 -name '*.ipk' | wc -l)"
+  echo "    ImageBuilder 本地包数量: $ipk_num"
+fi
 
 echo "=== 生成首启配置（IP/密码/主题） ==="
 password_hash="$(printf '%s\n' "$password" | openssl passwd -6 -stdin)"

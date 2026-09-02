@@ -52,7 +52,10 @@ prepare() {
   local source_dir="$1" config_file="$2" packages_file="$3" github_env="$4"
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
-  clone_extra_packages "$source_dir" "$packages_file"
+  # packages_file 为空表示本阶段不克隆源码包（第三方插件改由 SDK 工作流单独编译）
+  if [[ -n "$packages_file" ]]; then
+    clone_extra_packages "$source_dir" "$packages_file"
+  fi
   apply_device_config "$source_dir" "$lan_ip" "$password" "$default_theme"
   [[ "$check_official_abi" == true ]] && enable_official_kmods "$source_dir"
   printf 'FIRMWARE_LAN_IP=%s\nFIRMWARE_PASSWORD=%s\n' "$lan_ip" "$password" >> "$github_env"
@@ -86,6 +89,10 @@ case "${1:-}" in
   prepare)
     [[ $# -eq 5 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <packages.conf> <github-env>"
     prepare "$2" "$3" "$4" "$5"
+    ;;
+  clone-packages)
+    [[ $# -eq 3 ]] || fail "usage: $0 clone-packages <source-dir> <packages.conf>"
+    clone_extra_packages "$2" "$3"
     ;;
   check-abi)
     [[ $# -eq 6 ]] || fail "usage: $0 check-abi <source-dir> <firmware.conf> <version> <tag> <kmods-directory>"

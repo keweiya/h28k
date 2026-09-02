@@ -1,0 +1,134 @@
+name: 构建插件包
+
+# 用官方 SDK（与固件同版本、同 musl ABI）单独编译 config/sdk-packages.list
+# 里的第三方插件（nikki、fluent 主题等），打包为 ipk 集合并发布到 Release。
+# 这些 ipk 由「快速定制构建」在组装固件时注入 ImageBuilder——
+# 插件更新只需重跑本工作流（约 15~30 分钟），无需全量重编固件。
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: '目标 ImmortalWrt 系列（取该系列已测试版本中最新的）'
+        type: choice
+        required: true
+        default: 25.12
+        options:
+          - 24.10
+          - 25.12
+      publish_release:
+        description: '发布为 Release（长期保存，供快速定制构建使用）'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-packages-hinlink-h28k
+  cancel-in-progress: false
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 选择目标版本
+        id: release
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/select_release.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_OUTPUT" \
+            "${{ inputs.series }}" \
+            ""
+
+      - name: 解析 SDK 下载地址
+        id: sdk
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/select_sdk.sh" \
+            "${{ steps.release.outputs.version }}" \
+            "$GITHUB_OUTPUT"
+
+      - name: 下载并解包 SDK
+        run: |
+          curl -fsSL --retry 3 "${{ steps.sdk.outputs.sdk_url }}" -o sdk.tar.xz
+          mkdir sdk
+          tar -xJf sdk.tar.xz -C sdk --strip-components=1
+          ls -lh sdk.tar.xz
+
+      - name: 使用官方 feeds
+        working-directory: sdk
+        run: |
+          curl -fsSL \
+            "https://downloads.immortalwrt.org/releases/${{ steps.release.outputs.version }}/targets/rockchip/armv8/feeds.buildinfo" \
+            -o feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 克隆插件源码
+        working-directory: sdk
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/build_config.sh" clone-packages \
+            . "$GITHUB_WORKSPACE/config/packages.conf"
+
+      - name: 编译插件
+        working-directory: sdk
+        run: |
+          names=($(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' \
+            "$GITHUB_WORKSPACE/config/sdk-packages.list"))
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "sdk-packages.list 为空，没有需要编译的插件"
+            exit 1
+          fi
+          for name in "${names[@]}"; do
+            echo "CONFIG_PACKAGE_${name}=y" >> .config
+          done
+          make defconfig
+          for name in "${names[@]}"; do
+            echo "=== 编译插件: $name ==="
+            make package/"$name"/compile -j"$(nproc)" V=s 2>&1 | tee -a build.log
+            code=${PIPESTATUS[0]}
+            if [ "$code" -ne 0 ]; then
+              tail -100 build.log
+              exit "$code"
+            fi
+          done
+
+      - name: 收集插件 ipk
+        run: |
+          mkdir stage
+          # kmod 由官方源在组装固件时提供，SDK 编译的 kmod 不收集，避免版本混淆
+          find sdk/bin/packages -name '*.ipk' ! -name 'kmod-*' -exec cp {} stage/ \;
+          count=$(find stage -name '*.ipk' | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "没有收集到任何 ipk"
+            exit 1
+          fi
+          echo "共收集 $count 个 ipk："
+          ls -lh stage/
+          tar -czf "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" -C stage .
+
+      - name: 上传插件包构件
+        uses: actions/upload-artifact@v4
+        with:
+          name: H28K 插件包-v${{ steps.release.outputs.version }}
+          path: h28k-packages-v*.tar.gz
+          retention-days: 30
+
+      - name: 发布插件包 Release
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG_DATE=$(TZ=Asia/Hong_Kong date +'%Y%m%d')
+          PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}-$PKG_DATE"
+          gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
+            --title "H28K 插件包 v${{ steps.release.outputs.version }} ($PKG_DATE)" \
+            --notes "基于官方 SDK 编译的第三方插件 ipk（$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ') 及依赖）。
+          - 供「快速定制构建」工作流注入 ImageBuilder；kmod 由官方源在组装时提供
+          - 基于上游 ${{ steps.release.outputs.tag }}"

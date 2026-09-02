@@ -1,0 +1,8 @@
+# 「构建插件包」工作流（build-packages.yml）需要 SDK 源码编译的第三方插件，
+# 每行一个软件包名（即 make package/<名称>/compile 的目标名），空行和 # 注释被忽略。
+# 注意：
+# - 只填源码插件，不要填 kmod-*（kmod 由官方源在组装固件时提供，ABI 才一致）
+# - 不要填官方源已有包的子包名（如 openssh-sftp-server 是 openssh 的子包，编译目标名不对会失败）
+# - 本列表必须是 config/ib-packages.list 的子集（阶段 2 安装时按 ib-packages.list）
+luci-app-nikki
+luci-theme-fluent

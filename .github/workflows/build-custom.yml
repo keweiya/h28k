@@ -63,31 +63,21 @@ jobs:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
-      - name: 选择基础 Release
+      - name: 选择基础 Release 与插件包
         id: base
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ -n "${{ inputs.base_release }}" ]]; then
-            tag="${{ inputs.base_release }}"
-            # 先完整捕获再取第一个：管道接 head 会在 pipefail 下触发 SIGPIPE
-            urls="$(gh api "repos/{owner}/{repo}/releases/tags/$tag" \
-              --jq '.assets[] | select(.name | startswith("immortalwrt-imagebuilder-rockchip-armv8.")) | .browser_download_url')"
-            url="${urls%%$'\n'*}"
-            [[ -n "$url" ]] || { echo "Release ${tag} 没有自建 ImageBuilder 附件"; exit 1; }
-          else
-            bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
-              "${{ inputs.series }}" "$GITHUB_OUTPUT"
-            tag="$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")"
-            url="$(sed -n 's/^asset_url=//p' "$GITHUB_OUTPUT")"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
+            "${{ inputs.series }}" \
+            "$GITHUB_OUTPUT" \
+            "${{ inputs.base_release }}"
 
-      - name: 下载 ImageBuilder
+      - name: 下载 ImageBuilder 与插件包
         run: |
           curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
-          ls -lh ib.tar.xz
+          curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
+          ls -lh ib.tar.xz plugins.tar.gz
 
       - name: 组装定制固件
         env:
@@ -100,7 +90,8 @@ jobs:
             ib.tar.xz \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
-            "$GITHUB_WORKSPACE/out"
+            "$GITHUB_WORKSPACE/out" \
+            plugins.tar.gz
 
       - name: 上传定制固件构件
         uses: actions/upload-artifact@v4

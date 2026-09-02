@@ -41,6 +41,9 @@ jobs:
             if [[ "$tag" =~ ^h28k-custom- ]]; then
               # 快速定制构建的 Release 单独计数清理
               bucket="custom"
+            elif [[ "$tag" =~ ^h28k-packages- ]]; then
+              # 插件包 Release 单独计数清理
+              bucket="packages"
             else
               ver_date="${tag#h28k-v}"
               version="${ver_date%%-*}"

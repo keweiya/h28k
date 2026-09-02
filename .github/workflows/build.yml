@@ -180,11 +180,13 @@ jobs:
         env:
           CFG_LAN_IP: ${{ inputs.lan_ip }}
           CFG_PASSWORD: ${{ inputs.password }}
+          # 基础固件不含第三方主题（nikki/fluent 由 SDK 工作流单独编译、阶段 2 注入）
+          CFG_DEFAULT_THEME: ''
         run: |
           bash "$GITHUB_WORKSPACE/scripts/build_config.sh" prepare \
             . \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "$GITHUB_WORKSPACE/config/packages.conf" \
+            "" \
             "$GITHUB_ENV"
 
       - name: 准备内核配置

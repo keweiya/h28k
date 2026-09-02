@@ -14,16 +14,24 @@
 
 工作流手动触发时可在输入框临时覆盖 `lan_ip` / `password` / `rootfs_size`，留空即使用这里的默认值；定时构建固定使用默认值。
 
-## config/packages.conf（额外软件包）
+## config/packages.conf（插件源码克隆列表，仅插件包工作流使用）
 
-每行一条完整的 `git clone` 命令，克隆到 OpenWrt 源码树的 `package/` 下（目标路径相对源码根目录）。当前内置：
+每行一条完整的 `git clone` 命令，由「构建插件包」工作流克隆进官方 SDK 源码树。当前内置：
 
 ```
 git clone --depth=1 -b main https://github.com/nikkinikki-org/OpenWrt-nikki.git package/OpenWrt-nikki
 git clone --depth=1 https://github.com/LazuliKao/luci-theme-fluent.git package/luci-theme-fluent
 ```
 
-这些包不经过 feeds，直接随源码编译，不影响内核 ABI，并会自动打包进自建 ImageBuilder 供阶段 2（快速定制构建）使用。
+这些包由 SDK 编译成 ipk 并发布到插件包 Release（`h28k-packages-*`），**阶段 1 全量构建不再使用本文件**——第三方插件更新只需重跑插件包工作流，无需重编固件。
+
+## config/sdk-packages.list（需要 SDK 编译的插件名）
+
+「构建插件包」工作流实际编译的软件包名，每行一个（即 `make package/<名称>/compile` 的目标名）。当前为 `luci-app-nikki`、`luci-theme-fluent`。注意：
+
+- 只填源码插件，不要填 `kmod-*`（kmod 由官方源在组装固件时提供，ABI 才一致）
+- 不要填官方源已有包的子包名（编译目标名对不上会失败）
+- 本列表必须是 `config/ib-packages.list` 的子集
 
 ## config/ib-packages.list（快速定制构建的包列表）
 
@@ -36,8 +44,8 @@ kmod-mt7921u
 openssh-sftp-server
 ```
 
-- 包来源：自建 ImageBuilder 内置包（阶段 1 编译的 nikki、fluent 等）+ 官方软件源（组装时联网拉取）。
-- 包版本冻结在阶段 1 构建时刻，升级包需重跑一次阶段 1。
+- 包来源：**插件包 Release**（SDK 编译的 nikki/fluent ipk，`h28k-packages-v<版本>.tar.gz`）+ 官方软件源（组装时联网拉取 kmod 与官方包）。
+- 插件更新只需重跑「构建插件包」工作流（约 15~30 分钟），**无需重编固件**；新增源码插件时在 `packages.conf` 加 clone 行、`sdk-packages.list` 加包名即可。
 - **kmod 只能选择官方源已有的包**——IB 内核与阶段 1 完全一致（ABI 不变），但阶段 2 没有源码编译环节。
 - 想把默认 `wpad-basic-mbedtls` 换成 `wpad-openssl`：加 `-wpad-basic-mbedtls` 和 `wpad-openssl` 两行；若该版本 ImageBuilder 不支持负号移除默认包（会显式报错），删掉这两行即可——默认 wpad 同样能驱动 MT7921U。
 - 阶段 2 只需要维护这一个文件：LAN IP / root 密码 / 默认主题自动取自 `config/firmware.conf`，以首启 `uci-defaults` 方式注入，与阶段 1 编译期注入效果相同。

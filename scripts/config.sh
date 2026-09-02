@@ -67,6 +67,8 @@ load_firmware_config() {
   lan_ip="${CFG_LAN_IP:-$lan_ip}"
   password="${CFG_PASSWORD:-$password}"
   rootfs_size="${CFG_ROOTFS_SIZE:-$rootfs_size}"
+  # 主题允许被工作流显式置空（阶段 1 基础固件不含第三方主题），unset 时保留 conf 值
+  default_theme="${CFG_DEFAULT_THEME-$default_theme}"
 
   [[ -n "$rootfs_size" && "$rootfs_size" =~ ^[0-9]+$ ]] ||
     fail "invalid rootfs_size: $rootfs_size"

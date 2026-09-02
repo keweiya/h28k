@@ -35,7 +35,12 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 echo "=== 解包 ImageBuilder ==="
-tar -xJf "$ib_tarball" -C "$work_dir"
+# 官方 24.10/25.12 的 ImageBuilder 均为 zstd（.tar.zst）压缩；兼容旧的 xz
+case "$ib_tarball" in
+  *.tar.zst) tar --zstd -xf "$ib_tarball" -C "$work_dir" ;;
+  *.tar.xz)  tar -xJf "$ib_tarball" -C "$work_dir" ;;
+  *) fail "unsupported ImageBuilder tarball format: $ib_tarball（支持 .tar.zst / .tar.xz）" ;;
+esac
 ib_dir="$(find "$work_dir" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)"
 [[ -n "$ib_dir" ]] || fail "ImageBuilder directory not found in tarball"
 cd "$ib_dir"
@@ -66,7 +71,12 @@ mkdir -p files/etc/uci-defaults
 } > files/etc/uci-defaults/99-h28k-setup
 chmod +x files/etc/uci-defaults/99-h28k-setup
 
-packages="$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$packages_list" | tr '\n' ' ')"
+# 包列表格式：每行"包名=y"（安装）或"包名=n"（不安装），裸包名等同 =y，# 注释
+packages="$(awk '
+  { sub(/[[:space:]]*#.*/, "") }
+  { gsub(/[[:space:]]/, ""); if ($0 == "") next }
+  { if ($0 ~ /=n$/) next; sub(/=y$/, ""); print }
+' "$packages_list" | tr '\n' ' ')"
 # 源码插件：插件包内附 packages.list（构建插件包时写入的包名清单）自动并入安装列表，
 # 因此 source-plugins.list 里启用的插件无需写进 ib-packages.list
 if [[ -n "$plugins_tarball" && -f "$plugins_dir/packages.list" ]]; then

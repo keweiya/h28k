@@ -27,7 +27,7 @@
 阶段 1 已开启 `CONFIG_TARGET_ROOTFS_EXT4FS` 与 `CONFIG_TARGET_ROOTFS_TARGZ`：
 
 - **LXC/容器镜像**：Release 里的 `*-rootfs.tar.gz`（target 级根目录打包，不含内核），解包到 LXC/容器目录即可使用（内核由宿主机提供，需宿主内核支持相应网络/防火墙特性）。
-- **ext4 固件**：是否产出取决于 rockchip 的 image 配方（官方历来只发 squashfs）。构建产物里出现 `*ext4*sysupgrade.img.gz` 即可用；没出现说明配方不支持。两者均为镜像组装选项，不影响内核与 ABI。
+- **ext4 固件**：官方 rockchip 对每个设备都同时发布 ext4 + squashfs 双变体（已核对官方 Release 目录），本仓库同样会产出 `-ext4-sysupgrade.img.gz`，刷写方式与 squashfs 相同。两者均为镜像组装选项，不影响内核与 ABI。
 
 ## 为什么固件里默认没有 nikki 和 fluent 主题？
 

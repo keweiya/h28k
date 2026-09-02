@@ -17,8 +17,9 @@ github_output="${2:-}"
 
 base_url="https://downloads.immortalwrt.org/releases/$version/targets/rockchip/armv8"
 # 先完整捕获再取第一行：管道接 head 会在 pipefail 下触发 SIGPIPE
+# 官方 24.10/25.12 的 SDK 均为 zstd（.tar.zst）压缩；兼容旧的 xz
 names="$(curl -fsSL "$base_url/" |
-  sed -nE 's#.*href="(immortalwrt-sdk-[^"]*\.tar\.xz)".*#\1#p' |
+  sed -nE 's#.*href="(immortalwrt-sdk-[^"]*\.tar\.(zst|xz))".*#\1#p' |
   sort -u)"
 name="${names%%$'\n'*}"
 [[ -n "$name" ]] || fail "no SDK tarball found for $version (rockchip/armv8)"

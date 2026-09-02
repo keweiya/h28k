@@ -255,7 +255,7 @@ jobs:
           fi
           ls -lh "${FIRMWARE_FILES[@]}"
           IB_FILE="$(find bin/targets/rockchip/armv8 -maxdepth 1 \
-            -name 'immortalwrt-imagebuilder-*.tar.xz' -print -quit)"
+            -name 'immortalwrt-imagebuilder-*' -print -quit)"
           if [ -z "$IB_FILE" ]; then
             echo "ImageBuilder tarball not found"
             exit 1

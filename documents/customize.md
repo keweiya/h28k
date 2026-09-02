@@ -36,20 +36,27 @@
 - 注意：不要填官方包的子包名（编译目标名对不上会失败）；kmod 一律不写在这里（由官方源在组装时提供，ABI 才一致）。
 - 插件更新：重跑「构建插件包」（约 15~30 分钟），无需重编固件。
 
-## config/ib-packages.list（阶段 2 追加安装的官方源包）
+## config/ib-packages.list（官方源包开关清单，y/n 格式）
 
-**只填官方源已有的包**，每行一个。当前内容：
+由 `scripts/fetch_official_packages.sh` 从官方源自动生成的**全部官方插件包目录**（3184 个，来自 packages/luci/routing/telephony 四个插件源），每行一个包：
 
 ```
-kmod-mt7921u
-wpad-openssl
-openssh-sftp-server
+kmod-mt7921u=y          # 清单外小节：base/kmods 源的包
+wpad-openssl=y
+openssh-sftp-server=y
+464xlat=n
+6in4=n
+luci-app-docker=n
+luci-app-openclash=n
+...
 ```
 
+- **`=y` 安装进固件，`=n` 不安装**；默认只有 kmod-mt7921u、wpad-openssl、openssh-sftp-server 三个是 `=y`，其余全部 `=n`。
+- 启用想要的插件：把对应行改成 `=y`（用编辑器搜索，如 `luci-app-docker`），下次「快速定制构建」自动带上，无需重编固件。
+- 重新生成/换版本生成：`bash scripts/fetch_official_packages.sh <版本> config/ib-packages.list`——**已启用（=y）的会保留**，新增包默认 `=n`。
+- 覆盖范围：四个插件源（packages/luci/routing/telephony）；base 核心与 kmod 不在目录里，需要时手动加在文件末尾"清单外的官方包"小节（如 `kmod-usb-storage=y`）。
 - 源码第三方插件**不要**写在这里（由 source-plugins.list 自动带入）。
-- kmod 只能选官方源已有的包，且与基础构建的内核 ABI 一致。
-- 想把默认 `wpad-basic-mbedtls` 换成 `wpad-openssl`：已默认包含；负号移除语法仅部分 IB 支持，报错就删掉。
-- LAN IP / root 密码 / 根目录大小 / 主题不在这个文件：由 `firmware.conf` 与工作流输入控制。
+- 组装时 opkg/apk 会自动从官方在线源拉取所选包及其依赖（含 kmod），与官方 release 完全一致——这是 ABI 保证的一部分。
 
 ## 添加自定义插件要改几处？
 

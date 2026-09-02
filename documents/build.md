@@ -5,7 +5,7 @@
 ```
 阶段 1 · 全量源码构建（build.yml）
   官方源码 + H28K 补丁全量编译 → check-abi 门禁
-  → Release：基础固件（不含第三方插件）+ 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
+  → Release：基础固件（不含第三方插件）+ 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.zst，官方 24.10/25.12 均为 zstd 压缩）
   耗时 1.5~3 小时；仅在官方发新版或手动触发时需要执行
 
 插件包 · SDK 独立编译（build-packages.yml）
@@ -25,13 +25,13 @@
 
 | Release 标签 | 生成者 | 附件 | 保留策略 |
 | --- | --- | --- | --- |
-| `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**；如配方支持会有 ext4 变体）② `*-rootfs.tar.gz` 根目录 tar 包（不含内核，可直接用于 LXC/容器）③ 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz` | 每系列保留最近 3 个 |
+| `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**；官方 rockchip 每设备均发布 ext4 + squashfs 双变体，我们的配方同样会产出 ext4）② `*-rootfs.tar.gz` 根目录 tar 包（不含内核，可直接用于 LXC/容器）③ 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.zst` | 每系列保留最近 3 个 |
 | `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的源码插件及依赖（24.10 为 .ipk，25.12 为 .apk，自动匹配；不含 kmod）。**默认 `source-plugins.list` 全注释，不产生此 Release**；启用插件并重跑后才有 | 保留最近 3 个 |
 | `h28k-custom-<基础标签>-<时间>` | 阶段 2 / 插件包工作流的固件开关 | 定制固件 `*-hinlink_h28k-sysupgrade.img.gz`（基础 + 插件 + 你的参数） | 保留最近 3 个 |
 
 关于格式：24.10.x 使用 opkg/ipk，25.12.x 已切换到 apk/apk。插件包工作流收集哪种格式取决于该版本 SDK 的产出，组装时也由对应版本的包管理器安装，全程无需人工区分。
 
-关于 ext4：`CONFIG_TARGET_ROOTFS_EXT4FS` 已开启，ext4 变体是否产出取决于 rockchip 的 image 配方（官方 rockchip 历来只发 squashfs），构建产物里出现 `*ext4*sysupgrade.img.gz` 即可用，刷写方式与 squashfs 相同；没有出现说明配方不支持。ext4/rootfs.tar.gz 均为镜像组装选项，不影响内核与 ABI。
+关于 ext4：`CONFIG_TARGET_ROOTFS_EXT4FS` 已开启。官方 rockchip 对每个设备都同时发布 ext4 和 squashfs 两个变体（已核对官方 Release 目录），因此我们的 H28K 固件同样会产出 `-ext4-sysupgrade.img.gz`，刷写方式与 squashfs 相同。ext4/rootfs.tar.gz 均为镜像组装选项，不影响内核与 ABI。
 
 组装阶段 2 固件时，kmod（如 nikki 依赖的 kmod-tun、kmod-nft-tproxy）由官方软件源在线提供——与官方 release 完全一致，这是 ABI 保证的一部分；插件包 Release 里刻意不放 kmod。
 

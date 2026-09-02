@@ -87,10 +87,16 @@ jobs:
 
       - name: 下载并解包 SDK
         run: |
-          curl -fsSL --retry 3 "${{ steps.sdk.outputs.sdk_url }}" -o sdk.tar.xz
+          sdk_name="${{ steps.sdk.outputs.sdk_name }}"
+          curl -fsSL --retry 3 "${{ steps.sdk.outputs.sdk_url }}" -o "$sdk_name"
           mkdir sdk
-          tar -xJf sdk.tar.xz -C sdk --strip-components=1
-          ls -lh sdk.tar.xz
+          # 官方 24.10/25.12 的 SDK 均为 zstd（.tar.zst）压缩；兼容旧的 xz
+          case "$sdk_name" in
+            *.tar.zst) tar --zstd -xf "$sdk_name" -C sdk --strip-components=1 ;;
+            *.tar.xz)  tar -xJf "$sdk_name" -C sdk --strip-components=1 ;;
+            *) echo "未知 SDK 压缩格式: $sdk_name"; exit 1 ;;
+          esac
+          ls -lh "$sdk_name"
 
       - name: 使用官方 feeds
         working-directory: sdk

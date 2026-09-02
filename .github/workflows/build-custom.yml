@@ -1,10 +1,10 @@
 name: H28K 固件快速组装（ImageBuilder 直接出固件，约 5 分钟）
 
-# 阶段 2：用基础 Release 附带的自建 ImageBuilder 分钟级组装定制固件。
+# 用基础 Release 附带的自建 ImageBuilder 分钟级组装定制固件。
 # 与「H28K 固件全量构建」的区别：本工作流不编译任何源码，用现成 ImageBuilder
 # 组装（内核与全量构建完全一致，ABI 不变）；日常出固件用这个。
-# 前提：对应版本的某个固件 Release 已附带 immortalwrt-imagebuilder-*.tar.zst
-# （由「H28K 固件全量构建」工作流生成），插件包由「构建插件包」工作流提供。
+# 产物覆盖更新到该版本的 Release（tag = h28k-v<版本>），不会产生多余 Release。
+# 前提：对应版本已跑过「H28K 固件全量构建」；插件包由「H28K 插件包构建」提供。
 # 包列表与首启配置见 config/ib-packages.list 与 config/firmware.conf。
 
 on:
@@ -20,16 +20,6 @@ on:
           - 25.12.0
           - 24.10.6
           - 24.10.5
-      base_release:
-        description: '基础 Release 标签，留空自动选择'
-        type: string
-        required: false
-        default: ''
-      publish_release:
-        description: '发布为 Release'
-        type: boolean
-        required: false
-        default: false
       lan_ip:
         description: 'LAN 管理地址'
         type: string
@@ -54,11 +44,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-custom-hinlink-h28k
-  cancel-in-progress: false
+  group: assemble-h28k-${{ inputs.version }}
+  cancel-in-progress: true
 
 jobs:
-  custom:
+  assemble:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -73,20 +63,19 @@ jobs:
         run: |
           bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
             "${{ inputs.version }}" \
-            "$GITHUB_OUTPUT" \
-            "${{ inputs.base_release }}"
+            "$GITHUB_OUTPUT"
 
       - name: 下载 ImageBuilder 与插件包
         run: |
-          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
+          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.zst
           if [[ -n "${{ steps.base.outputs.packages_url }}" ]]; then
             curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
             echo "PLUGINS_ARG=plugins.tar.gz" >> "$GITHUB_ENV"
           else
-            echo "该版本尚无插件包附件，组装不含源码插件的固件（在 config/source-plugins.list 启用插件后跑「构建插件包」）"
+            echo "该版本尚无插件包附件，组装不含源码插件的固件（在 config/source-plugins.list 启用插件后跑「H28K 插件包构建」）"
             echo "PLUGINS_ARG=" >> "$GITHUB_ENV"
           fi
-          ls -lh ib.tar.xz
+          ls -lh ib.tar.zst
 
       - name: 组装定制固件
         env:
@@ -96,26 +85,50 @@ jobs:
         run: |
           mkdir out
           bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
-            ib.tar.xz \
+            ib.tar.zst \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
             "$PLUGINS_ARG"
 
+      - name: 统计已启用插件
+        run: |
+          # 只统计官方插件源小节里 =y 的 luci-app-*（不含中文包/清单外/中文界面）
+          plugins="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1 | paste -sd' ' -)"
+          if [[ -n "$plugins" ]]; then
+            echo "PLUGIN_NOTE=**已启用插件**：$plugins" >> "$GITHUB_ENV"
+          else
+            echo "PLUGIN_NOTE=已启用插件：无（纯净官方组件 + 中文界面）" >> "$GITHUB_ENV"
+          fi
+
       - name: 上传定制固件构件
         uses: actions/upload-artifact@v4
         with:
-          name: H28K 定制固件-${{ steps.base.outputs.tag }}
+          name: H28K 固件-v${{ inputs.version }}-${{ github.run_number }}
           path: out/*sysupgrade*.img.gz
           retention-days: 30
 
-      - name: 发布定制固件 Release
-        if: inputs.publish_release
+      - name: 发布 Release（覆盖更新）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CUSTOM_TAG="h28k-custom-${{ steps.base.outputs.tag }}-$(TZ=Asia/Hong_Kong date +'%H%M%S')"
-          echo "CUSTOM_TAG=$CUSTOM_TAG" >> "$GITHUB_ENV"
-          gh release create "$CUSTOM_TAG" out/*sysupgrade*.img.gz \
-            --title "H28K 定制固件（基于 ${{ steps.base.outputs.tag }}）" \
-            --notes "用自建 ImageBuilder 组装的定制固件，包列表见仓库 config/ib-packages.list，内核与 ${{ steps.base.outputs.tag }} 完全一致（ABI 不变）。"
+          TAG="h28k-v${{ inputs.version }}"
+          BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
+          TITLE="H28K 固件 ${{ inputs.version }}"
+          NOTES="## H28K 固件 ${{ inputs.version }}（最新固件）
+
+          - **组装时间**：$BUILD_TIME
+          - **设备型号**：HINLINK H28K (RK3528)
+          - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
+          - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
+          - ${{ env.PLUGIN_NOTE }}
+          - **kmod 与官方源包**：组装时从官方软件源在线拉取，与官方 release 完全一致
+
+          本附件为最新组装固件（覆盖基础固件）；ImageBuilder / rootfs.tar.gz 等附件由「H28K 固件全量构建」维护。"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/*sysupgrade*.img.gz --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" out/*sysupgrade*.img.gz --title "$TITLE" --notes "$NOTES"
+          fi

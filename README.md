@@ -48,23 +48,25 @@
 本仓库采用**三段式构建**（基础固件 / 插件包 / 定制固件分离，插件更新无需全量重编）：
 
 ```
-阶段 1 · 全量源码构建（慢，1.5~3 小时，仅在官方发新版或手动触发时）
+阶段 1 · 全量源码构建（慢，1.5~3 小时，手动触发）
   H28K 固件全量构建：全量编译 → check-abi 门禁
-  → Release：基础固件（不含第三方插件）+ 自建 ImageBuilder
-  定时构建发现该版本已发过 Release 会自动跳过（可传 force_build 强制重建）
+  → 发布/覆盖更新 Release（tag = h28k-v<版本>）：基础固件 + 自建 ImageBuilder
 
 插件包 · SDK 独立编译（约 15~30 分钟，插件更新时手动触发）
   H28K 插件包构建：官方 SDK 编译 nikki / fluent 主题等源码插件
-  → Release 长期保存 ipk 集合（h28k-packages-v<版本>.tar.gz）
+  → 发布/覆盖更新 Release（tag = h28k-packages-v<版本>）：插件 ipk/apk 集合
 
 阶段 2 · 固件快速组装（快，约 5 分钟，随时手动触发）
-  H28K 固件快速组装工作流：下载自建 ImageBuilder + 匹配版本的插件包
+  H28K 固件快速组装：下载自建 ImageBuilder + 匹配版本的插件包
   → 注入 IP/密码/主题/软件包 → make image 组装 → ABI 与阶段 1 完全一致
+  → 发布/覆盖更新 Release（tag = h28k-v<版本>，固件附件替换为最新组装产物）
+
+每个版本只有一个 Release，重复构建原地覆盖更新，不会堆积；全部工作流均为手动触发。
 ```
 
-- **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本下拉选一个（默认 25.12.1），可填 LAN 地址、root 密码、根目录大小（512M/1G/2G）。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
+- **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本下拉选一个（默认 25.12.1），可填 LAN 地址、root 密码、根目录大小。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
 - **插件包**：Actions → 「H28K 插件包构建」→ 选版本。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟），也可勾选"立即组装固件"一步出固件。
-- **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本（或指定基础 Release），改 `config/ib-packages.list` 即可换软件包组合。**日常使用的固件来自这里**（基础固件不含第三方插件）。
+- **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 
@@ -83,7 +85,6 @@ h28k-openwrt/
 │   └── 25.12/                       # 25.12 系补丁（5 个板级补丁）
 ├── scripts/
 │   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
-│   ├── resolve_versions.sh           # 手动选的版本 → 构建矩阵版本列表（定时取各系列最新）
 │   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希
 │   ├── select_sdk.sh                # 解析官方 SDK 下载地址
 │   ├── select_ib.sh                 # 选基础 Release（IB 附件 + 匹配版本的插件包附件）
@@ -92,10 +93,9 @@ h28k-openwrt/
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
 │   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
-    ├── build.yml                    # 阶段 1：全量源码构建（定时 + 手动，系列矩阵）
-    ├── build-packages.yml           # 插件包：官方 SDK 编译第三方插件 → Release 长期保存
-    ├── build-custom.yml             # 阶段 2：固件快速组装（分钟级）
-    └── delete-older-releases.yml    # 各类 Release 分别保留最近 N 个
+    ├── build.yml                    # 阶段 1：全量源码构建（手动，单版本）
+    ├── build-packages.yml           # 插件包：官方 SDK 编译第三方插件 → 覆盖更新 Release
+    └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）
 ```
 
 ## 固件组件

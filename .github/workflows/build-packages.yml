@@ -167,18 +167,35 @@ jobs:
           path: h28k-packages-v*.tar.gz
           retention-days: 30
 
-      - name: 发布插件包 Release
+      - name: 发布插件包 Release（覆盖更新）
         if: inputs.publish_release && steps.plugins.outputs.built == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG_DATE=$(TZ=Asia/Hong_Kong date +'%Y%m%d%H%M')
-          PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}-$PKG_DATE"
-          gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
-            --title "H28K 插件包 v${{ steps.release.outputs.version }} ($PKG_DATE)" \
-            --notes "基于官方 SDK 编译的第三方插件（$(cat sdk/plugin-names.txt | tr '\n' ' ') 及依赖）。
-          - 供「快速定制构建」工作流注入 ImageBuilder；kmod 由官方源在组装时提供
-          - 基于上游 ${{ steps.release.outputs.tag }}"
+          PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}"
+          PKG_TITLE="H28K 插件包 v${{ steps.release.outputs.version }}"
+          PKG_NOTES="基于官方 SDK 编译的第三方插件（$(cat sdk/plugin-names.txt | tr '\n' ' ') 及依赖）。
+          - 供「H28K 固件快速组装」工作流注入 ImageBuilder；kmod 由官方源在组装时提供
+          - 基于上游 ${{ steps.release.outputs.tag }}
+          - 重复构建本版本会覆盖更新本 Release"
+          if gh release view "$PKG_TAG" > /dev/null 2>&1; then
+            gh release upload "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" --clobber
+            gh release edit "$PKG_TAG" --title "$PKG_TITLE" --notes "$PKG_NOTES"
+          else
+            gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
+              --title "$PKG_TITLE" --notes "$PKG_NOTES"
+          fi
+
+      - name: 统计已启用插件
+        if: inputs.build_firmware
+        run: |
+          plugins="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1 | paste -sd' ' -)"
+          if [[ -n "$plugins" ]]; then
+            echo "PLUGIN_NOTE=**已启用插件**：$plugins" >> "$GITHUB_ENV"
+          else
+            echo "PLUGIN_NOTE=已启用插件：无（纯净官方组件 + 中文界面）" >> "$GITHUB_ENV"
+          fi
 
       - name: 解析基础 Release（ImageBuilder）
         if: inputs.build_firmware
@@ -192,8 +209,8 @@ jobs:
       - name: 下载 ImageBuilder
         if: inputs.build_firmware
         run: |
-          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
-          ls -lh ib.tar.xz
+          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.zst
+          ls -lh ib.tar.zst
 
       - name: 组装完整固件
         if: inputs.build_firmware
@@ -207,7 +224,7 @@ jobs:
           plugins_file="h28k-packages-v${{ steps.release.outputs.version }}.tar.gz"
           [ -f "$plugins_file" ] || plugins_file=""
           bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
-            ib.tar.xz \
+            ib.tar.zst \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
@@ -217,24 +234,31 @@ jobs:
         if: inputs.build_firmware
         uses: actions/upload-artifact@v4
         with:
-          name: H28K 定制固件-基于v${{ steps.release.outputs.version }}
+          name: H28K 固件-v${{ steps.release.outputs.version }}-${{ github.run_number }}
           path: out/*sysupgrade*.img.gz
           retention-days: 30
 
-      - name: 发布固件 Release
+      - name: 发布固件 Release（覆盖更新）
         if: inputs.build_firmware
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -f sdk/plugin-names.txt ]; then
-            names="启用插件：$(cat sdk/plugin-names.txt | tr '\n' ' ')"
+          TAG="h28k-v${{ steps.release.outputs.version }}"
+          BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
+          TITLE="H28K 固件 ${{ steps.release.outputs.version }}"
+          NOTES="## H28K 固件 ${{ steps.release.outputs.version }}（最新固件）
+
+          - **组装时间**：$BUILD_TIME
+          - **设备型号**：HINLINK H28K (RK3528)
+          - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
+          - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
+          - ${{ env.PLUGIN_NOTE }}
+          - **kmod 与官方源包**：组装时从官方软件源在线拉取，与官方 release 完全一致
+
+          本工作流一次完成：SDK 编译插件 + ImageBuilder 组装；重复构建会覆盖更新本 Release。"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/*sysupgrade*.img.gz --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
           else
-            names="未启用源码插件（纯官方组件）"
+            gh release create "$TAG" out/*sysupgrade*.img.gz --title "$TITLE" --notes "$NOTES"
           fi
-          FW_TAG="h28k-custom-v${{ steps.release.outputs.version }}-$(TZ=Asia/Hong_Kong date +'%Y%m%d%H%M%S')"
-          gh release create "$FW_TAG" out/*sysupgrade*.img.gz \
-            --title "H28K 定制固件（基于 v${{ steps.release.outputs.version }}）" \
-            --notes "本插件包工作流一次完成：SDK 编译插件 + ImageBuilder 组装。
-          - $names（ib-packages.list 全量清单见仓库）
-          - 内核与上游 ${{ steps.release.outputs.tag }} 完全一致（ABI 不变）
-          - 管理地址/root 密码见本次运行输入"

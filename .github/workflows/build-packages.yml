@@ -172,7 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG_DATE=$(TZ=Asia/Hong_Kong date +'%Y%m%d')
+          PKG_DATE=$(TZ=Asia/Hong_Kong date +'%Y%m%d%H%M')
           PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}-$PKG_DATE"
           gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
             --title "H28K 插件包 v${{ steps.release.outputs.version }} ($PKG_DATE)" \

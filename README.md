@@ -38,7 +38,7 @@
 
 1. armsr rootfs + remake 重打包——kmod ABI 冲突（见上表）。
 2. ophub 多内核在线切换——依赖 ophub 内核 tar 包体系，同样破坏 ABI。
-3. luci-app-amlogic 图形化安装 EMMC / btrfs 快照回滚——依赖 flippy 式 btrfs 分区布局与 `/etc` 子卷；原生 rockchip 镜像已支持 dd 写 SD 启动后 sysupgrade / 直接 dd 安装 EMMC，见 [documents/install.md](documents/install.md)。
+3. luci-app-amlogic 图形化安装 EMMC / btrfs 快照回滚——依赖 flippy 式 btrfs 分区布局与 `/etc` 子卷；原生 rockchip 镜像已支持 dd 写 SD 启动后 sysupgrade / 直接 dd 安装 EMMC。
 4. `model_database.conf` 多设备表——单板仓库不需要。
 
 从 amlogic-s9xxx-openwrt 移植的是它的**多版本工程化骨架**：按系列组织的补丁与配置、矩阵化自动构建、可复用工作流、分册文档与按系列保留的 Release 规范。
@@ -66,19 +66,13 @@
 - **插件包**：Actions → 构建插件包 → 选系列。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟），也可勾选"立即组装固件"一步出固件。
 - **阶段 2**：Actions → 快速定制构建（ImageBuilder）→ 选基础系列/Release，改 `config/ib-packages.list` 即可换软件包组合。**日常使用的固件来自这里**（基础固件不含第三方插件）。
 
-| 文档 | 内容 |
-| --- | --- |
-| [documents/build.md](documents/build.md) | 工作流总览、两段式构建、构建参数、产物、缓存与清理 |
-| [documents/customize.md](documents/customize.md) | 固件参数、额外软件包、快速定制的包列表、新增系列 |
-| [documents/install.md](documents/install.md) | 刷 SD、安装 EMMC、升级 |
-| [documents/faq.md](documents/faq.md) | 常见问题与故障排查 |
+（各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 
 ## 目录结构
 
 ```
 h28k-openwrt/
 ├── README.md
-├── documents/                       # 分册文档
 ├── config/
 │   ├── firmware.conf                # 初始化参数（版本白名单、LAN IP、密码、根目录大小、主题、ABI 开关）
 │   ├── source-plugins.list          # 源码插件清单（唯一插件入口，默认全注释保持纯净）

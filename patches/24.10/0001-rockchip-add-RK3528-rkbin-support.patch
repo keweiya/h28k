@@ -1,0 +1,69 @@
+diff --git a/package/boot/arm-trusted-firmware-rockchip/Makefile b/package/boot/arm-trusted-firmware-rockchip/Makefile
+index 94a4ab8e..d1ea2097 100644
+--- a/package/boot/arm-trusted-firmware-rockchip/Makefile
++++ b/package/boot/arm-trusted-firmware-rockchip/Makefile
+@@ -51,6 +51,12 @@ define Trusted-Firmware-A/rk3399
+   LOADER:=rk33/$(RK3399_LOADER)
+ endef
+ 
++define Trusted-Firmware-A/rk3528
++  BUILD_SUBTARGET:=armv8
++  ATF:=rk35/$(RK3528_ATF)
++  TPL:=rk35/$(RK3528_TPL)
++endef
++
+ define Trusted-Firmware-A/rk3566
+   BUILD_SUBTARGET:=armv8
+   ATF:=rk35/$(RK3566_ATF)
+@@ -81,6 +87,7 @@ TFA_TARGETS:= \
+ 	rk3308-rock-pi-s \
+ 	rk3328 \
+ 	rk3399 \
++	rk3528 \
+ 	rk3566 \
+ 	rk3568 \
+ 	rk3568-e25 \
+@@ -101,6 +108,29 @@ ifeq ($(BUILD_VARIANT),rk3308-rock-pi-s)
+   endef
+ endif
+
++ifeq ($(BUILD_VARIANT),rk3528)
++  define Download/rk3528-atf
++    FILE:=$(RK3528_ATF)
++    URL:=https://raw.githubusercontent.com/rockchip-linux/rkbin/74213af1e952c4683d2e35952507133b61394862/bin/rk35/
++    HASH:=886496dfe584b7e85c4bb5a2e97854c604294314b955e15a36ca492e051a04fd
++  endef
++
++  define Download/rk3528-tpl
++    FILE:=$(RK3528_TPL)
++    URL:=https://raw.githubusercontent.com/rockchip-linux/rkbin/74213af1e952c4683d2e35952507133b61394862/bin/rk35/
++    HASH:=f033ad7a6a18dbfed138d334a5c9317e183c5f22128848f28a5a59291418af6e
++  endef
++
++  define Build/Prepare
++	$(eval $(call Download,rk3528-atf))
++	$(eval $(call Download,rk3528-tpl))
++	$(call Build/Prepare/Default)
++
++	$(CP) $(DL_DIR)/$(RK3528_ATF) $(PKG_BUILD_DIR)/bin/rk35/
++	$(CP) $(DL_DIR)/$(RK3528_TPL) $(PKG_BUILD_DIR)/bin/rk35/
++  endef
++endif
++
+ ifeq ($(BUILD_VARIANT),rk3568-e25)
+   define Download/rk3568-tpl-e25
+     FILE:=$(RK3568_TPL_E25)
+diff --git a/package/boot/arm-trusted-firmware-rockchip/atf-version.mk b/package/boot/arm-trusted-firmware-rockchip/atf-version.mk
+index 9e25a80f..e8223026 100644
+--- a/package/boot/arm-trusted-firmware-rockchip/atf-version.mk
++++ b/package/boot/arm-trusted-firmware-rockchip/atf-version.mk
+@@ -10,6 +10,9 @@ RK3399_ATF:=rk3399_bl31_v1.36.elf
+ RK3399_TPL:=rk3399_ddr_800MHz_v1.30.bin
+ RK3399_LOADER:=rk3399_miniloader_v1.30.bin
+ 
++RK3528_ATF:=rk3528_bl31_v1.20.elf
++RK3528_TPL:=rk3528_ddr_1056MHz_v1.11.bin
++
+ RK3566_ATF:=rk3568_bl31_v1.44.elf
+ RK3566_TPL:=rk3566_ddr_1056MHz_v1.21.bin
+ 

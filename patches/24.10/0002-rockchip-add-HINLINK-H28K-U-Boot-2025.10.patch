@@ -1,0 +1,1581 @@
+diff --git a/package/boot/uboot-h28k/Makefile b/package/boot/uboot-h28k/Makefile
+new file mode 100644
+index 00000000..01df1950
+--- /dev/null
++++ b/package/boot/uboot-h28k/Makefile
+@@ -0,0 +1,53 @@
++#
++# This is free software, licensed under the GNU General Public License v2.
++# See /LICENSE for more information.
++#
++include $(TOPDIR)/rules.mk
++include $(INCLUDE_DIR)/kernel.mk
++
++PKG_VERSION:=2025.10
++PKG_RELEASE:=1
++PKG_HASH:=b4f032848e56cc8f213ad59f9132c084dbbb632bc29176d024e58220e0efdf4a
++
++UBOOT_USE_BINMAN:=1
++UBOOT_USE_INTREE_DTC:=1
++
++include $(INCLUDE_DIR)/u-boot.mk
++include $(INCLUDE_DIR)/package.mk
++
++define U-Boot/Default
++  BUILD_TARGET:=rockchip
++  BUILD_SUBTARGET:=armv8
++  UENV:=default
++  HIDDEN:=1
++endef
++
++define U-Boot/hinlink-h28k-rk3528
++  DEPENDS:=+PACKAGE_u-boot-$(1):trusted-firmware-a-rk3528
++  ATF:=rk3528_bl31_v1.20.elf
++  TPL:=rk3528_ddr_1056MHz_v1.11.bin
++  NAME:=HINLINK H28K
++  BUILD_DEVICES:=hinlink_h28k
++endef
++
++UBOOT_TARGETS:=hinlink-h28k-rk3528
++
++UBOOT_CONFIGURE_VARS += USE_PRIVATE_LIBGCC=yes
++
++UBOOT_CUSTOMIZE_CONFIG:= \
++	--disable TOOLS_MKEFICAPSULE \
++	--set-str MKIMAGE_DTC_PATH $(PKG_BUILD_DIR)/scripts/dtc/dtc
++
++UBOOT_MAKE_FLAGS += \
++	BL31=$(STAGING_DIR_IMAGE)/$(ATF) \
++	ROCKCHIP_TPL=$(STAGING_DIR_IMAGE)/$(TPL)
++
++define Build/InstallDev
++	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
++	$(CP) $(PKG_BUILD_DIR)/u-boot-rockchip.bin $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-u-boot-rockchip.bin
++endef
++
++define Package/u-boot/install/default
++endef
++
++$(eval $(call BuildPackage/U-Boot))
+diff --git a/package/boot/uboot-h28k/src/arch/arm/dts/rk3528-hinlink-h28k-u-boot.dtsi b/package/boot/uboot-h28k/src/arch/arm/dts/rk3528-hinlink-h28k-u-boot.dtsi
+new file mode 100644
+index 00000000..3e2fbd81
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/arch/arm/dts/rk3528-hinlink-h28k-u-boot.dtsi
+@@ -0,0 +1,11 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++
++#include "rk3528-u-boot.dtsi"
++
++&vdd_arm {
++	regulator-init-microvolt = <953000>;
++};
++
++&vdd_logic {
++	regulator-init-microvolt = <900000>;
++};
+diff --git a/package/boot/uboot-h28k/src/arch/arm/include/asm/arch-rockchip/bootrom.h b/package/boot/uboot-h28k/src/arch/arm/include/asm/arch-rockchip/bootrom.h
+new file mode 100644
+index 00000000..b15938c0
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/arch/arm/include/asm/arch-rockchip/bootrom.h
+@@ -0,0 +1,69 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * (C) Copyright 2017 Heiko Stuebner <heiko@sntech.de>
++ * (C) Copyright 2017 Theobroma Systems Design und Consulting GmbH
++ */
++
++#ifndef _ASM_ARCH_BOOTROM_H
++#define _ASM_ARCH_BOOTROM_H
++
++#include <linux/types.h>
++
++/*
++ * Saved Stack pointer address.
++ * Access might be needed in some special cases.
++ */
++extern u32 SAVE_SP_ADDR;
++
++/**
++ * back_to_bootrom() - return to bootrom (for TPL/SPL), passing a
++ *                     result code
++ *
++ * Transfer control back to the Rockchip BROM, restoring necessary
++ * register context and passing a command/result code to the BROM
++ * to instruct its next actions (e.g. continue boot sequence, enter
++ * download mode, ...).
++ *
++ * This function does not return.
++ *
++ * @brom_cmd: indicates how the bootrom should continue the boot
++ *            sequence (e.g. load the next stage)
++ */
++enum rockchip_bootrom_cmd {
++	/*
++	 * These can not start at 0, as 0 has a special meaning
++	 * for setjmp().
++	 */
++
++	BROM_BOOT_NEXTSTAGE = 1,  /* continue boot-sequence */
++	BROM_BOOT_ENTER_DNL,      /* have BROM enter download-mode */
++};
++
++void back_to_bootrom(enum rockchip_bootrom_cmd brom_cmd);
++
++/**
++ * Boot-device identifiers as used by the BROM
++ */
++enum {
++	BROM_BOOTSOURCE_UNKNOWN = 0,
++	BROM_BOOTSOURCE_NAND = 1,
++	BROM_BOOTSOURCE_EMMC = 2,
++	BROM_BOOTSOURCE_SPINOR = 3,
++	BROM_BOOTSOURCE_SPINAND = 4,
++	BROM_BOOTSOURCE_SD = 5,
++	BROM_BOOTSOURCE_I2C = 8,
++	BROM_BOOTSOURCE_SPI = 9,
++	BROM_BOOTSOURCE_USB = 10,
++	BROM_LAST_BOOTSOURCE = BROM_BOOTSOURCE_USB
++};
++
++extern const char * const boot_devices[BROM_LAST_BOOTSOURCE + 1];
++
++/**
++ * Locations of the boot-device identifier in SRAM
++ */
++#define BROM_BOOTSOURCE_ID_ADDR   (CFG_IRAM_BASE + 0x10)
++
++u32 read_brom_bootsource_id(void);
++
++#endif
+diff --git a/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/rk3528/rk3528.c b/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/rk3528/rk3528.c
+new file mode 100644
+index 00000000..57ead000
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/rk3528/rk3528.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// Copyright Contributors to the U-Boot project.
++
++#define LOG_CATEGORY LOGC_ARCH
++
++#include <dm.h>
++#include <misc.h>
++#include <asm/armv8/mmu.h>
++#include <asm/arch-rockchip/bootrom.h>
++#include <asm/arch-rockchip/hardware.h>
++
++#define VPU_GRF_BASE			0xff340000
++#define USB3OTG_CON1			0x44
++
++#define FIREWALL_DDR_BASE		0xff2e0000
++#define FW_DDR_MST6_REG			0x58
++#define FW_DDR_MST7_REG			0x5c
++#define FW_DDR_MST14_REG		0x78
++#define FW_DDR_MST16_REG		0x80
++
++const char * const boot_devices[BROM_LAST_BOOTSOURCE + 1] = {
++	[BROM_BOOTSOURCE_EMMC] = "/soc/mmc@ffbf0000",
++	[BROM_BOOTSOURCE_SD] = "/soc/mmc@ffc30000",
++};
++
++static struct mm_region rk3528_mem_map[] = {
++	{
++		.virt = 0x0UL,
++		.phys = 0x0UL,
++		.size = 0xfc000000UL,
++		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
++			 PTE_BLOCK_INNER_SHARE
++	}, {
++		.virt = 0xfc000000UL,
++		.phys = 0xfc000000UL,
++		.size = 0x04000000UL,
++		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
++			 PTE_BLOCK_NON_SHARE |
++			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
++	}, {
++		/* List terminator */
++		0,
++	}
++};
++
++struct mm_region *mem_map = rk3528_mem_map;
++
++void board_debug_uart_init(void)
++{
++}
++
++u32 read_brom_bootsource_id(void)
++{
++	u32 bootsource_id = readl(BROM_BOOTSOURCE_ID_ADDR);
++
++	/* Re-map the raw value read from reg to an existing BROM_BOOTSOURCE
++	 * enum value to avoid having to create a larger boot_devices table.
++	 */
++	if (bootsource_id == 0x81)
++		return BROM_BOOTSOURCE_USB;
++	else if (bootsource_id > BROM_LAST_BOOTSOURCE)
++		log_debug("Unknown bootsource %x\n", bootsource_id);
++
++	return bootsource_id;
++}
++
++int arch_cpu_init(void)
++{
++	u32 val;
++
++	if (!IS_ENABLED(CONFIG_SPL_BUILD))
++		return 0;
++
++	/* Set the emmc to access ddr memory */
++	val = readl(FIREWALL_DDR_BASE + FW_DDR_MST6_REG);
++	writel(val & 0x0000ffff, FIREWALL_DDR_BASE + FW_DDR_MST6_REG);
++
++	/* Set the fspi to access ddr memory */
++	val = readl(FIREWALL_DDR_BASE + FW_DDR_MST7_REG);
++	writel(val & 0xffff0000, FIREWALL_DDR_BASE + FW_DDR_MST7_REG);
++
++	/* Set the sdmmc to access ddr memory */
++	val = readl(FIREWALL_DDR_BASE + FW_DDR_MST14_REG);
++	writel(val & 0x0000ffff, FIREWALL_DDR_BASE + FW_DDR_MST14_REG);
++
++	/* Set the usb to access ddr memory */
++	val = readl(FIREWALL_DDR_BASE + FW_DDR_MST16_REG);
++	writel(val & 0xffff0000, FIREWALL_DDR_BASE + FW_DDR_MST16_REG);
++
++	/* Disable USB3OTG U3 port, later enabled in COMBPHY driver */
++	writel(0xffff0181, VPU_GRF_BASE + USB3OTG_CON1);
++
++	return 0;
++}
++
++#define HP_TIMER_BASE			CONFIG_ROCKCHIP_STIMER_BASE
++#define HP_CTRL_REG			0x04
++#define TIMER_EN			BIT(0)
++#define HP_LOAD_COUNT0_REG		0x14
++#define HP_LOAD_COUNT1_REG		0x18
++
++void rockchip_stimer_init(void)
++{
++	u32 reg;
++
++	if (!IS_ENABLED(CONFIG_XPL_BUILD))
++		return;
++
++	reg = readl(HP_TIMER_BASE + HP_CTRL_REG);
++	if (reg & TIMER_EN)
++		return;
++
++	asm volatile("msr cntfrq_el0, %0" : : "r" (CONFIG_COUNTER_FREQUENCY));
++	writel(0xffffffff, HP_TIMER_BASE + HP_LOAD_COUNT0_REG);
++	writel(0xffffffff, HP_TIMER_BASE + HP_LOAD_COUNT1_REG);
++	writel(TIMER_EN, HP_TIMER_BASE + HP_CTRL_REG);
++}
++
++#define RK3528_OTP_CPU_CODE_OFFSET		0x02
++#define RK3528_OTP_CPU_CHIP_TYPE_OFFSET		0x28
++
++int checkboard(void)
++{
++	u8 cpu_code[2], chip_type;
++	struct udevice *dev;
++	char suffix[2];
++	int ret;
++
++	if (!IS_ENABLED(CONFIG_ROCKCHIP_OTP) || !CONFIG_IS_ENABLED(MISC))
++		return 0;
++
++	ret = uclass_get_device_by_driver(UCLASS_MISC,
++					  DM_DRIVER_GET(rockchip_otp), &dev);
++	if (ret) {
++		log_debug("Could not find otp device, ret=%d\n", ret);
++		return 0;
++	}
++
++	/* cpu-code: SoC model, e.g. 0x35 0x28 */
++	ret = misc_read(dev, RK3528_OTP_CPU_CODE_OFFSET, cpu_code, 2);
++	if (ret < 0) {
++		log_debug("Could not read cpu-code, ret=%d\n", ret);
++		return 0;
++	}
++
++	ret = misc_read(dev, RK3528_OTP_CPU_CHIP_TYPE_OFFSET, &chip_type, 1);
++	if (ret < 0) {
++		log_debug("Could not read chip type, ret=%d\n", ret);
++		return 0;
++	}
++
++	suffix[0] = chip_type != 0x1 ? 'A' : '\0';
++	suffix[1] = '\0';
++
++	printf("SoC:   RK%02x%02x%s\n", cpu_code[0], cpu_code[1], suffix);
++
++	return 0;
++}
+diff --git a/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/spl.c b/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/spl.c
+new file mode 100644
+index 00000000..1ce3a3b0
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/arch/arm/mach-rockchip/spl.c
+@@ -0,0 +1,142 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2019 Rockchip Electronics Co., Ltd
++ */
++
++#include <cpu_func.h>
++#include <debug_uart.h>
++#include <dm.h>
++#include <hang.h>
++#include <image.h>
++#include <init.h>
++#include <log.h>
++#include <ram.h>
++#include <spl.h>
++#include <asm/arch-rockchip/bootrom.h>
++#include <asm/arch-rockchip/timer.h>
++#include <asm/global_data.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++int board_return_to_bootrom(struct spl_image_info *spl_image,
++			    struct spl_boot_device *bootdev)
++{
++	back_to_bootrom(BROM_BOOT_NEXTSTAGE);
++
++	return 0;
++}
++
++__weak const char * const boot_devices[BROM_LAST_BOOTSOURCE + 1] = {
++};
++
++__weak u32 read_brom_bootsource_id(void)
++{
++	return readl(BROM_BOOTSOURCE_ID_ADDR);
++}
++
++const char *board_spl_was_booted_from(void)
++{
++	static u32 brom_bootsource_id_cache = BROM_BOOTSOURCE_UNKNOWN;
++	u32 bootdevice_brom_id;
++	const char *bootdevice_ofpath = NULL;
++
++	if (brom_bootsource_id_cache != BROM_BOOTSOURCE_UNKNOWN)
++		bootdevice_brom_id = brom_bootsource_id_cache;
++	else
++		bootdevice_brom_id = read_brom_bootsource_id();
++
++	if (bootdevice_brom_id < ARRAY_SIZE(boot_devices))
++		bootdevice_ofpath = boot_devices[bootdevice_brom_id];
++
++	if (bootdevice_ofpath) {
++		brom_bootsource_id_cache = bootdevice_brom_id;
++		debug("%s: brom_bootdevice_id %x maps to '%s'\n",
++		      __func__, bootdevice_brom_id, bootdevice_ofpath);
++	} else {
++		debug("%s: failed to resolve brom_bootdevice_id %x\n",
++		      __func__, bootdevice_brom_id);
++	}
++
++	return bootdevice_ofpath;
++}
++
++u32 spl_boot_device(void)
++{
++	u32 boot_device = BOOT_DEVICE_MMC1;
++
++#if defined(CONFIG_TARGET_CHROMEBOOK_JERRY) || \
++		defined(CONFIG_TARGET_CHROMEBIT_MICKEY) || \
++		defined(CONFIG_TARGET_CHROMEBOOK_MINNIE) || \
++		defined(CONFIG_TARGET_CHROMEBOOK_SPEEDY) || \
++		defined(CONFIG_TARGET_CHROMEBOOK_BOB) || \
++		defined(CONFIG_TARGET_CHROMEBOOK_KEVIN)
++	return BOOT_DEVICE_SPI;
++#endif
++	if (CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM))
++		return BOOT_DEVICE_BOOTROM;
++
++	return boot_device;
++}
++
++u32 spl_mmc_boot_mode(struct mmc *mmc, const u32 boot_device)
++{
++	return MMCSD_MODE_RAW;
++}
++
++__weak int board_early_init_f(void)
++{
++	return 0;
++}
++
++__weak int arch_cpu_init(void)
++{
++	return 0;
++}
++
++void board_init_f(ulong dummy)
++{
++	int ret;
++
++	board_early_init_f();
++
++	ret = spl_early_init();
++	if (ret) {
++		printf("spl_early_init() failed: %d\n", ret);
++		hang();
++	}
++	arch_cpu_init();
++
++	rockchip_stimer_init();
++
++#ifdef CONFIG_SYS_ARCH_TIMER
++	/* Init ARM arch timer in arch/arm/cpu/armv7/arch_timer.c */
++	timer_init();
++#endif
++#if !defined(CONFIG_TPL) || defined(CONFIG_SPL_RAM)
++	debug("\nspl:init dram\n");
++	ret = dram_init();
++	if (ret) {
++		printf("DRAM init failed: %d\n", ret);
++		return;
++	}
++	gd->ram_top = gd->ram_base + get_effective_memsize();
++	gd->ram_top = board_get_usable_ram_top(gd->ram_size);
++
++	if (IS_ENABLED(CONFIG_ARM64) && !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)) {
++		gd->relocaddr = gd->ram_top;
++		arch_reserve_mmu();
++		enable_caches();
++	}
++#endif
++	preloader_console_init();
++}
++
++void spl_board_prepare_for_boot(void)
++{
++	if (!IS_ENABLED(CONFIG_ARM64) || CONFIG_IS_ENABLED(SYS_DCACHE_OFF))
++		return;
++
++	cleanup_before_linux();
++}
+diff --git a/package/boot/uboot-h28k/src/configs/hinlink-h28k-rk3528_defconfig b/package/boot/uboot-h28k/src/configs/hinlink-h28k-rk3528_defconfig
+new file mode 100644
+index 00000000..de5be0c8
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/configs/hinlink-h28k-rk3528_defconfig
+@@ -0,0 +1,64 @@
++CONFIG_ARM=y
++CONFIG_SKIP_LOWLEVEL_INIT=y
++CONFIG_COUNTER_FREQUENCY=24000000
++CONFIG_ARCH_ROCKCHIP=y
++CONFIG_DEFAULT_DEVICE_TREE="rockchip/rk3528-hinlink-h28k"
++CONFIG_ROCKCHIP_RK3528=y
++CONFIG_SYS_LOAD_ADDR=0xc00800
++CONFIG_DEBUG_UART_BASE=0xFF9F0000
++CONFIG_DEBUG_UART_CLOCK=24000000
++CONFIG_DEBUG_UART=y
++CONFIG_DEFAULT_FDT_FILE="rockchip/rk3528-hinlink-h28k.dtb"
++# CONFIG_DISPLAY_CPUINFO is not set
++CONFIG_BOARD_RNG_SEED=y
++CONFIG_SPL_MAX_SIZE=0x40000
++# CONFIG_SPL_RAW_IMAGE_SUPPORT is not set
++CONFIG_CMD_MEMINFO=y
++CONFIG_CMD_MEMINFO_MAP=y
++CONFIG_CMD_ADC=y
++CONFIG_CMD_GPIO=y
++CONFIG_CMD_GPT=y
++CONFIG_CMD_MISC=y
++CONFIG_CMD_MMC=y
++CONFIG_CMD_USB=y
++CONFIG_CMD_ROCKUSB=y
++CONFIG_CMD_USB_MASS_STORAGE=y
++# CONFIG_CMD_SETEXPR is not set
++CONFIG_CMD_RNG=y
++CONFIG_CMD_REGULATOR=y
++# CONFIG_SPL_DOS_PARTITION is not set
++CONFIG_OF_SPL_REMOVE_PROPS="clock-names interrupt-parent assigned-clocks assigned-clock-rates assigned-clock-parents"
++CONFIG_BUTTON=y
++CONFIG_BUTTON_ADC=y
++# CONFIG_USB_FUNCTION_FASTBOOT is not set
++CONFIG_ROCKCHIP_GPIO=y
++CONFIG_LED=y
++CONFIG_LED_GPIO=y
++CONFIG_SUPPORT_EMMC_RPMB=y
++CONFIG_MMC_DW=y
++CONFIG_MMC_DW_ROCKCHIP=y
++CONFIG_MMC_SDHCI=y
++CONFIG_MMC_SDHCI_SDMA=y
++CONFIG_MMC_SDHCI_ROCKCHIP=y
++CONFIG_PHY_REALTEK=y
++CONFIG_DM_MDIO=y
++CONFIG_DWC_ETH_QOS=y
++CONFIG_DWC_ETH_QOS_ROCKCHIP=y
++CONFIG_PHY_ROCKCHIP_INNO_USB2=y
++CONFIG_PHY_ROCKCHIP_NANENG_COMBOPHY=y
++CONFIG_REGULATOR_PWM=y
++CONFIG_DM_REGULATOR_GPIO=y
++CONFIG_PWM_ROCKCHIP=y
++CONFIG_BAUDRATE=1500000
++CONFIG_DEBUG_UART_SHIFT=2
++CONFIG_SYS_NS16550_MEM32=y
++CONFIG_USB=y
++CONFIG_USB_XHCI_HCD=y
++CONFIG_USB_EHCI_HCD=y
++CONFIG_USB_EHCI_GENERIC=y
++CONFIG_USB_DWC3=y
++CONFIG_USB_DWC3_GENERIC=y
++CONFIG_USB_GADGET=y
++CONFIG_USB_GADGET_DOWNLOAD=y
++CONFIG_USB_FUNCTION_ROCKUSB=y
++CONFIG_ERRNO_STR=y
+diff --git a/package/boot/uboot-h28k/src/drivers/mmc/rockchip_sdhci.c b/package/boot/uboot-h28k/src/drivers/mmc/rockchip_sdhci.c
+new file mode 100644
+index 00000000..8116e464
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/drivers/mmc/rockchip_sdhci.c
+@@ -0,0 +1,758 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2016 Fuzhou Rockchip Electronics Co., Ltd
++ *
++ * Rockchip SD Host Controller Interface
++ */
++
++#include <clk.h>
++#include <dm.h>
++#include <dm/ofnode.h>
++#include <dt-structs.h>
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/libfdt.h>
++#include <linux/iopoll.h>
++#include <malloc.h>
++#include <mapmem.h>
++#include "mmc_private.h"
++#include <sdhci.h>
++#include <syscon.h>
++#include <asm/arch-rockchip/clock.h>
++#include <asm/arch-rockchip/hardware.h>
++
++/* DWCMSHC specific Mode Select value */
++#define DWCMSHC_CTRL_HS400		0x7
++/* 400KHz is max freq for card ID etc. Use that as min */
++#define EMMC_MIN_FREQ	400000
++#define KHz	(1000)
++#define MHz	(1000 * KHz)
++#define SDHCI_TUNING_LOOP_COUNT		40
++
++#define PHYCTRL_CALDONE_MASK		0x1
++#define PHYCTRL_CALDONE_SHIFT		0x6
++#define PHYCTRL_CALDONE_DONE		0x1
++#define PHYCTRL_DLLRDY_MASK		0x1
++#define PHYCTRL_DLLRDY_SHIFT		0x5
++#define PHYCTRL_DLLRDY_DONE		0x1
++#define PHYCTRL_FREQSEL_200M		0x0
++#define PHYCTRL_FREQSEL_50M		0x1
++#define PHYCTRL_FREQSEL_100M		0x2
++#define PHYCTRL_FREQSEL_150M		0x3
++#define PHYCTRL_DLL_LOCK_WO_TMOUT(x)	\
++	((((x) >> PHYCTRL_DLLRDY_SHIFT) & PHYCTRL_DLLRDY_MASK) ==\
++	PHYCTRL_DLLRDY_DONE)
++
++#define ARASAN_VENDOR_REGISTER		0x78
++#define ARASAN_VENDOR_ENHANCED_STROBE	BIT(0)
++
++/* Rockchip specific Registers */
++#define DWCMSHC_EMMC_EMMC_CTRL		0x52c
++#define DWCMSHC_CARD_IS_EMMC		BIT(0)
++#define DWCMSHC_ENHANCED_STROBE		BIT(8)
++#define DWCMSHC_EMMC_AT_CTRL		0x540
++#define EMMC_AT_CTRL_TUNE_CLK_STOP_EN	BIT(16)
++#define EMMC_AT_CTRL_PRE_CHANGE_DLY	17
++#define EMMC_AT_CTRL_POST_CHANGE_DLY	19
++#define DWCMSHC_EMMC_DLL_CTRL		0x800
++#define DWCMSHC_EMMC_DLL_CTRL_RESET	BIT(1)
++#define DWCMSHC_EMMC_DLL_RXCLK		0x804
++#define DWCMSHC_EMMC_DLL_TXCLK		0x808
++#define DWCMSHC_EMMC_DLL_STRBIN		0x80c
++#define DWCMSHC_EMMC_DLL_CMDOUT		0x810
++#define DWCMSHC_EMMC_DLL_STATUS0	0x840
++#define DWCMSHC_EMMC_DLL_STATUS1	0x844
++#define DWCMSHC_EMMC_DLL_START		BIT(0)
++#define DWCMSHC_EMMC_DLL_LOCKED		BIT(8)
++#define DWCMSHC_EMMC_DLL_TIMEOUT	BIT(9)
++#define DWCMSHC_EMMC_DLL_START_POINT	16
++#define DWCMSHC_EMMC_DLL_START_DEFAULT	5
++#define DWCMSHC_EMMC_DLL_INC_VALUE	2
++#define DWCMSHC_EMMC_DLL_INC		8
++#define DWCMSHC_EMMC_DLL_BYPASS		BIT(24)
++#define DWCMSHC_EMMC_DLL_DLYENA		BIT(27)
++#define DLL_RXCLK_NO_INVERTER		BIT(29)
++#define DLL_RXCLK_ORI_GATE		BIT(31)
++#define DLL_TXCLK_TAPNUM_DEFAULT	0x10
++#define DLL_TXCLK_TAPNUM_FROM_SW	BIT(24)
++#define DLL_TXCLK_NO_INVERTER		BIT(29)
++#define DLL_STRBIN_TAPNUM_DEFAULT	0x4
++#define DLL_STRBIN_TAPNUM_FROM_SW	BIT(24)
++#define DLL_STRBIN_DELAY_NUM_SEL	BIT(26)
++#define DLL_STRBIN_DELAY_NUM_OFFSET	16
++#define DLL_STRBIN_DELAY_NUM_DEFAULT	0x10
++#define DLL_CMDOUT_TAPNUM_90_DEGREES	0x8
++#define DLL_CMDOUT_TAPNUM_FROM_SW	BIT(24)
++#define DLL_CMDOUT_SRC_CLK_NEG		BIT(28)
++#define DLL_CMDOUT_EN_SRC_CLK_NEG	BIT(29)
++#define DLL_CMDOUT_BOTH_CLK_EDGE	BIT(30)
++#define DLL_TAPVALUE_FROM_SW		BIT(25)
++#define DLL_TAP_VALUE_PREP(x)		FIELD_PREP(GENMASK(15, 8), (x))
++#define DLL_LOCK_VALUE_GET(x)		FIELD_GET(GENMASK(7, 0), (x))
++
++#define DLL_LOCK_WO_TMOUT(x) \
++	((((x) & DWCMSHC_EMMC_DLL_LOCKED) == DWCMSHC_EMMC_DLL_LOCKED) && \
++	(((x) & DWCMSHC_EMMC_DLL_TIMEOUT) == 0))
++#define ROCKCHIP_MAX_CLKS		3
++
++#define FLAG_INVERTER_FLAG_IN_RXCLK	BIT(0)
++#define FLAG_TAPVALUE_FROM_SW		BIT(1)
++
++struct rockchip_sdhc_plat {
++	struct mmc_config cfg;
++	struct mmc mmc;
++};
++
++struct rockchip_emmc_phy {
++	u32 emmcphy_con[7];
++	u32 reserved;
++	u32 emmcphy_status;
++};
++
++struct rockchip_sdhc {
++	struct sdhci_host host;
++	struct udevice *dev;
++	void *base;
++	struct rockchip_emmc_phy *phy;
++	struct clk emmc_clk;
++};
++
++struct sdhci_data {
++	int (*get_phy)(struct udevice *dev);
++
++	/**
++	 * set_control_reg() - Set SDHCI control registers
++	 *
++	 * This is the set_control_reg() SDHCI operation that should be
++	 * used for the hardware this driver data is associated with.
++	 * Normally, this is used to set up control registers for
++	 * voltage level and UHS speed mode.
++	 *
++	 * @host: SDHCI host structure
++	 */
++	void (*set_control_reg)(struct sdhci_host *host);
++
++	/**
++	 * set_ios_post() - Host specific hook after set_ios() calls
++	 *
++	 * This is the set_ios_post() SDHCI operation that should be
++	 * used for the hardware this driver data is associated with.
++	 * Normally, this is a hook that is called after sdhci_set_ios()
++	 * that does any necessary host-specific configuration.
++	 *
++	 * @host: SDHCI host structure
++	 * Return: 0 if successful, -ve on error
++	 */
++	int (*set_ios_post)(struct sdhci_host *host);
++
++	void (*set_clock)(struct sdhci_host *host, u32 div);
++	int (*config_dll)(struct sdhci_host *host, u32 clock, bool enable);
++
++	/**
++	 * set_enhanced_strobe() - Set HS400 Enhanced Strobe config
++	 *
++	 * This is the set_enhanced_strobe() SDHCI operation that should
++	 * be used for the hardware this driver data is associated with.
++	 * Normally, this is used to set any host-specific configuration
++	 * necessary for HS400 ES.
++	 *
++	 * @host: SDHCI host structure
++	 * Return: 0 if successful, -ve on error
++	 */
++	int (*set_enhanced_strobe)(struct sdhci_host *host);
++
++	u32 flags;
++	u8 hs200_txclk_tapnum;
++	u8 hs400_txclk_tapnum;
++	u8 hs400_cmdout_tapnum;
++	u8 hs400_strbin_tapnum;
++	u8 ddr50_strbin_delay_num;
++};
++
++static void rk3399_emmc_phy_power_on(struct rockchip_emmc_phy *phy, u32 clock)
++{
++	u32 caldone, dllrdy, freqsel;
++
++	writel(RK_CLRSETBITS(7 << 4, 0), &phy->emmcphy_con[6]);
++	writel(RK_CLRSETBITS(1 << 11, 1 << 11), &phy->emmcphy_con[0]);
++	writel(RK_CLRSETBITS(0xf << 7, 6 << 7), &phy->emmcphy_con[0]);
++
++	/*
++	 * According to the user manual, calpad calibration
++	 * cycle takes more than 2us without the minimal recommended
++	 * value, so we may need a little margin here
++	 */
++	udelay(3);
++	writel(RK_CLRSETBITS(1, 1), &phy->emmcphy_con[6]);
++
++	/*
++	 * According to the user manual, it asks driver to
++	 * wait 5us for calpad busy trimming. But it seems that
++	 * 5us of caldone isn't enough for all cases.
++	 */
++	udelay(500);
++	caldone = readl(&phy->emmcphy_status);
++	caldone = (caldone >> PHYCTRL_CALDONE_SHIFT) & PHYCTRL_CALDONE_MASK;
++	if (caldone != PHYCTRL_CALDONE_DONE) {
++		printf("%s: caldone timeout.\n", __func__);
++		return;
++	}
++
++	/* Set the frequency of the DLL operation */
++	if (clock < 75 * MHz)
++		freqsel = PHYCTRL_FREQSEL_50M;
++	else if (clock < 125 * MHz)
++		freqsel = PHYCTRL_FREQSEL_100M;
++	else if (clock < 175 * MHz)
++		freqsel = PHYCTRL_FREQSEL_150M;
++	else
++		freqsel = PHYCTRL_FREQSEL_200M;
++
++	/* Set the frequency of the DLL operation */
++	writel(RK_CLRSETBITS(3 << 12, freqsel << 12), &phy->emmcphy_con[0]);
++	writel(RK_CLRSETBITS(1 << 1, 1 << 1), &phy->emmcphy_con[6]);
++
++	/* REN Enable on STRB Line for HS400 */
++	writel(RK_CLRSETBITS(0, 1 << 9), &phy->emmcphy_con[2]);
++
++	read_poll_timeout(readl, dllrdy, PHYCTRL_DLL_LOCK_WO_TMOUT(dllrdy), 1,
++			  5000, &phy->emmcphy_status);
++}
++
++static void rk3399_emmc_phy_power_off(struct rockchip_emmc_phy *phy)
++{
++	writel(RK_CLRSETBITS(1, 0), &phy->emmcphy_con[6]);
++	writel(RK_CLRSETBITS(1 << 1, 0), &phy->emmcphy_con[6]);
++}
++
++static int rk3399_emmc_get_phy(struct udevice *dev)
++{
++	struct rockchip_sdhc *priv = dev_get_priv(dev);
++	ofnode phy_node;
++	void *grf_base;
++	u32 grf_phy_offset, phandle;
++
++	phandle = dev_read_u32_default(dev, "phys", 0);
++	phy_node = ofnode_get_by_phandle(phandle);
++	if (!ofnode_valid(phy_node)) {
++		debug("Not found emmc phy device\n");
++		return -ENODEV;
++	}
++
++	grf_base = syscon_get_first_range(ROCKCHIP_SYSCON_GRF);
++	if (IS_ERR_OR_NULL(grf_base)) {
++		printf("%s: Get syscon grf failed\n", __func__);
++		return -ENODEV;
++	}
++	grf_phy_offset = ofnode_read_u32_default(phy_node, "reg", 0);
++
++	priv->phy = (struct rockchip_emmc_phy *)(grf_base + grf_phy_offset);
++
++	return 0;
++}
++
++static int rk3399_sdhci_set_enhanced_strobe(struct sdhci_host *host)
++{
++	struct mmc *mmc = host->mmc;
++	u32 vendor;
++
++	vendor = sdhci_readl(host, ARASAN_VENDOR_REGISTER);
++	if (mmc->selected_mode == MMC_HS_400_ES)
++		vendor |= ARASAN_VENDOR_ENHANCED_STROBE;
++	else
++		vendor &= ~ARASAN_VENDOR_ENHANCED_STROBE;
++	sdhci_writel(host, vendor, ARASAN_VENDOR_REGISTER);
++
++	return 0;
++}
++
++static void rk3399_sdhci_set_control_reg(struct sdhci_host *host)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct mmc *mmc = host->mmc;
++	uint clock = mmc->tran_speed;
++	int cycle_phy = host->clock != clock && clock > EMMC_MIN_FREQ;
++
++	if (cycle_phy)
++		rk3399_emmc_phy_power_off(priv->phy);
++
++	sdhci_set_control_reg(host);
++
++	/*
++	 * Reinitializing the device tries to set it to lower-speed modes
++	 * first, which fails if the Enhanced Strobe bit is set, making
++	 * the device impossible to use. Set the correct value here to
++	 * let reinitialization attempts succeed.
++	 */
++	if (CONFIG_IS_ENABLED(MMC_HS400_ES_SUPPORT))
++		rk3399_sdhci_set_enhanced_strobe(host);
++};
++
++static int rk3399_sdhci_set_ios_post(struct sdhci_host *host)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct mmc *mmc = host->mmc;
++	uint clock = mmc->tran_speed;
++	int cycle_phy = host->clock != clock && clock > EMMC_MIN_FREQ;
++
++	if (!clock)
++		clock = mmc->clock;
++
++	if (cycle_phy)
++		rk3399_emmc_phy_power_on(priv->phy, clock);
++
++	return 0;
++}
++
++static void rk3568_sdhci_set_clock(struct sdhci_host *host, u32 div)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct mmc *mmc = host->mmc;
++	ulong rate;
++
++	rate = clk_set_rate(&priv->emmc_clk, mmc->clock);
++	if (IS_ERR_VALUE(rate))
++		printf("%s: Set clock rate failed: %ld\n", __func__, (long)rate);
++}
++
++static int rk3568_sdhci_config_dll(struct sdhci_host *host, u32 clock, bool enable)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++	struct mmc *mmc = host->mmc;
++	int val, ret;
++	u32 extra, txclk_tapnum, dll_tap_value;
++
++	if (!enable) {
++		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_CTRL);
++		return 0;
++	}
++
++	if (clock >= 100 * MHz) {
++		/* reset DLL */
++		sdhci_writel(host, DWCMSHC_EMMC_DLL_CTRL_RESET, DWCMSHC_EMMC_DLL_CTRL);
++		udelay(1);
++		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_CTRL);
++
++		extra = 0x3 << EMMC_AT_CTRL_POST_CHANGE_DLY |
++			0x3 << EMMC_AT_CTRL_PRE_CHANGE_DLY |
++			EMMC_AT_CTRL_TUNE_CLK_STOP_EN;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_AT_CTRL);
++
++		/* Init DLL settings */
++		extra = DWCMSHC_EMMC_DLL_START_DEFAULT << DWCMSHC_EMMC_DLL_START_POINT |
++			DWCMSHC_EMMC_DLL_INC_VALUE << DWCMSHC_EMMC_DLL_INC |
++			DWCMSHC_EMMC_DLL_START;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_CTRL);
++
++		ret = read_poll_timeout(readl, val, DLL_LOCK_WO_TMOUT(val), 1,
++					500,
++					host->ioaddr + DWCMSHC_EMMC_DLL_STATUS0);
++		if (ret)
++			return ret;
++
++		if (data->flags & FLAG_TAPVALUE_FROM_SW)
++			dll_tap_value = DLL_TAPVALUE_FROM_SW |
++					DLL_TAP_VALUE_PREP(DLL_LOCK_VALUE_GET(val) * 2);
++		else
++			dll_tap_value = 0;
++
++		extra = DWCMSHC_EMMC_DLL_DLYENA |
++			DLL_RXCLK_ORI_GATE |
++			dll_tap_value;
++		if (data->flags & FLAG_INVERTER_FLAG_IN_RXCLK)
++			extra |= DLL_RXCLK_NO_INVERTER;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
++
++		txclk_tapnum = data->hs200_txclk_tapnum;
++		if (mmc->selected_mode == MMC_HS_400 ||
++		    mmc->selected_mode == MMC_HS_400_ES) {
++			txclk_tapnum = data->hs400_txclk_tapnum;
++
++			extra = DLL_CMDOUT_SRC_CLK_NEG |
++				DLL_CMDOUT_BOTH_CLK_EDGE |
++				DWCMSHC_EMMC_DLL_DLYENA |
++				data->hs400_cmdout_tapnum |
++				DLL_CMDOUT_TAPNUM_FROM_SW |
++				dll_tap_value;
++			sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_CMDOUT);
++		}
++
++		extra = DWCMSHC_EMMC_DLL_DLYENA |
++			DLL_TXCLK_TAPNUM_FROM_SW |
++			DLL_TXCLK_NO_INVERTER |
++			txclk_tapnum |
++			dll_tap_value;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_TXCLK);
++
++		extra = DWCMSHC_EMMC_DLL_DLYENA |
++			data->hs400_strbin_tapnum |
++			DLL_STRBIN_TAPNUM_FROM_SW |
++			dll_tap_value;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_STRBIN);
++	} else {
++		/*
++		 * Disable DLL and reset both of sample and drive clock.
++		 * The bypass bit and start bit need to be set if DLL is not locked.
++		 */
++		extra = DWCMSHC_EMMC_DLL_BYPASS | DWCMSHC_EMMC_DLL_START;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_CTRL);
++		sdhci_writel(host, DLL_RXCLK_ORI_GATE, DWCMSHC_EMMC_DLL_RXCLK);
++		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_TXCLK);
++		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_CMDOUT);
++		/*
++		 * Before switching to hs400es mode, the driver will enable
++		 * enhanced strobe first. PHY needs to configure the parameters
++		 * of enhanced strobe first.
++		 */
++		extra = DWCMSHC_EMMC_DLL_DLYENA |
++			DLL_STRBIN_DELAY_NUM_SEL |
++			data->ddr50_strbin_delay_num << DLL_STRBIN_DELAY_NUM_OFFSET;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_STRBIN);
++	}
++
++	return 0;
++}
++
++static int rk3568_sdhci_set_ios_post(struct sdhci_host *host)
++{
++	struct mmc *mmc = host->mmc;
++	struct rockchip_sdhc_plat *plat = dev_get_plat(mmc->dev);
++	struct mmc_config *cfg = &plat->cfg;
++	u32 reg;
++
++	reg = sdhci_readw(host, SDHCI_HOST_CONTROL2);
++	reg &= ~SDHCI_CTRL_UHS_MASK;
++
++	switch (mmc->selected_mode) {
++	case UHS_SDR25:
++	case MMC_HS:
++	case MMC_HS_52:
++		reg |= SDHCI_CTRL_UHS_SDR25;
++		break;
++	case UHS_SDR50:
++		reg |= SDHCI_CTRL_UHS_SDR50;
++		break;
++	case UHS_DDR50:
++	case MMC_DDR_52:
++		reg |= SDHCI_CTRL_UHS_DDR50;
++		break;
++	case UHS_SDR104:
++	case MMC_HS_200:
++		reg |= SDHCI_CTRL_UHS_SDR104;
++		break;
++	case MMC_HS_400:
++	case MMC_HS_400_ES:
++		reg |= DWCMSHC_CTRL_HS400;
++		break;
++	default:
++		reg |= SDHCI_CTRL_UHS_SDR12;
++	}
++
++	sdhci_writew(host, reg, SDHCI_HOST_CONTROL2);
++
++	reg = sdhci_readw(host, DWCMSHC_EMMC_EMMC_CTRL);
++
++	if (IS_MMC(mmc))
++		reg |= DWCMSHC_CARD_IS_EMMC;
++	else
++		reg &= ~DWCMSHC_CARD_IS_EMMC;
++
++	if (mmc->selected_mode == MMC_HS_400_ES)
++		reg |= DWCMSHC_ENHANCED_STROBE;
++	else
++		reg &= ~DWCMSHC_ENHANCED_STROBE;
++
++	sdhci_writew(host, reg, DWCMSHC_EMMC_EMMC_CTRL);
++
++	/*
++	 * Reading more than 4 blocks with a single CMD18 command in PIO mode
++	 * triggers Data End Bit Error using a slower mode than HS200. Limit to
++	 * reading max 4 blocks in one command when using PIO mode.
++	 */
++	if (!(host->flags & USE_DMA)) {
++		if (mmc->selected_mode == MMC_HS_200 ||
++		    mmc->selected_mode == MMC_HS_400 ||
++		    mmc->selected_mode == MMC_HS_400_ES)
++			cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++		else
++			cfg->b_max = 4;
++	}
++
++	return 0;
++}
++
++static void rockchip_sdhci_set_control_reg(struct sdhci_host *host)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++
++	if (data->set_control_reg)
++		data->set_control_reg(host);
++}
++
++static int rockchip_sdhci_set_ios_post(struct sdhci_host *host)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++
++	if (data->set_ios_post)
++		return data->set_ios_post(host);
++
++	return 0;
++}
++
++static void rockchip_sdhci_set_clock(struct sdhci_host *host, u32 div)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++
++	if (data->set_clock)
++		data->set_clock(host, div);
++}
++
++static int rockchip_sdhci_execute_tuning(struct mmc *mmc, u8 opcode)
++{
++	struct rockchip_sdhc *priv = dev_get_priv(mmc->dev);
++	struct sdhci_host *host = &priv->host;
++	s8 tuning_loop_counter = SDHCI_TUNING_LOOP_COUNT;
++	struct mmc_cmd cmd;
++	u32 ctrl, blk_size;
++	int ret;
++
++	ctrl = sdhci_readw(host, SDHCI_HOST_CONTROL2);
++	ctrl |= SDHCI_CTRL_EXEC_TUNING;
++	sdhci_writew(host, ctrl, SDHCI_HOST_CONTROL2);
++
++	sdhci_writel(host, SDHCI_INT_DATA_AVAIL, SDHCI_INT_ENABLE);
++
++	blk_size = SDHCI_MAKE_BLKSZ(SDHCI_DEFAULT_BOUNDARY_ARG, 64);
++	if (opcode == MMC_CMD_SEND_TUNING_BLOCK_HS200 && mmc->bus_width == 8)
++		blk_size = SDHCI_MAKE_BLKSZ(SDHCI_DEFAULT_BOUNDARY_ARG, 128);
++	sdhci_writew(host, blk_size, SDHCI_BLOCK_SIZE);
++	sdhci_writew(host, SDHCI_TRNS_READ, SDHCI_TRANSFER_MODE);
++
++	cmd.cmdidx = opcode;
++	cmd.resp_type = MMC_RSP_R1;
++	cmd.cmdarg = 0;
++
++	do {
++		ret = mmc_send_cmd(mmc, &cmd, NULL);
++		ctrl = sdhci_readw(host, SDHCI_HOST_CONTROL2);
++		if (ret || tuning_loop_counter-- == 0)
++			break;
++	} while (ctrl & SDHCI_CTRL_EXEC_TUNING);
++
++	if (ret || tuning_loop_counter < 0 || !(ctrl & SDHCI_CTRL_TUNED_CLK)) {
++		if (!ret)
++			ret = -EIO;
++		printf("%s: Tuning failed: %d\n", __func__, ret);
++
++		ctrl &= ~SDHCI_CTRL_TUNED_CLK;
++		ctrl &= ~SDHCI_CTRL_EXEC_TUNING;
++		sdhci_writew(host, ctrl, SDHCI_HOST_CONTROL2);
++	}
++
++	/* Enable only interrupts served by the SD controller */
++	sdhci_writel(host, SDHCI_INT_DATA_MASK | SDHCI_INT_CMD_MASK, SDHCI_INT_ENABLE);
++
++	return ret;
++}
++
++static int rockchip_sdhci_config_dll(struct sdhci_host *host, u32 clock, bool enable)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++
++	if (data->config_dll)
++		return data->config_dll(host, clock, enable);
++
++	return 0;
++}
++
++static int rockchip_sdhci_set_enhanced_strobe(struct sdhci_host *host)
++{
++	struct rockchip_sdhc *priv = container_of(host, struct rockchip_sdhc, host);
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(priv->dev);
++
++	if (data->set_enhanced_strobe)
++		return data->set_enhanced_strobe(host);
++
++	return 0;
++}
++
++static struct sdhci_ops rockchip_sdhci_ops = {
++	.set_control_reg = rockchip_sdhci_set_control_reg,
++	.set_ios_post = rockchip_sdhci_set_ios_post,
++	.set_clock = rockchip_sdhci_set_clock,
++	.platform_execute_tuning = rockchip_sdhci_execute_tuning,
++	.config_dll = rockchip_sdhci_config_dll,
++	.set_enhanced_strobe = rockchip_sdhci_set_enhanced_strobe,
++};
++
++static int rockchip_sdhci_probe(struct udevice *dev)
++{
++	struct sdhci_data *data = (struct sdhci_data *)dev_get_driver_data(dev);
++	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
++	struct rockchip_sdhc_plat *plat = dev_get_plat(dev);
++	struct rockchip_sdhc *priv = dev_get_priv(dev);
++	struct mmc_config *cfg = &plat->cfg;
++	struct sdhci_host *host = &priv->host;
++	struct clk *clk = &priv->emmc_clk;
++	int ret;
++
++	host->max_clk = cfg->f_max;
++	ret = clk_get_by_index(dev, 0, clk);
++	if (!ret) {
++		ret = clk_set_rate(clk, host->max_clk);
++		if (IS_ERR_VALUE(ret))
++			printf("%s clk set rate fail!\n", __func__);
++	} else if (ret != -ENOSYS) {
++		printf("%s fail to get clk\n", __func__);
++	}
++
++	priv->dev = dev;
++
++	if (data->get_phy) {
++		ret = data->get_phy(dev);
++		if (ret)
++			return ret;
++	}
++
++	host->ops = &rockchip_sdhci_ops;
++	host->quirks = SDHCI_QUIRK_WAIT_SEND_CMD;
++
++	host->mmc = &plat->mmc;
++	host->mmc->priv = &priv->host;
++	host->mmc->dev = dev;
++	upriv->mmc = host->mmc;
++
++	ret = sdhci_setup_cfg(cfg, host, cfg->f_max, EMMC_MIN_FREQ);
++	if (ret)
++		return ret;
++
++	/*
++	 * Disable use of DMA and force use of PIO mode in SPL to fix an issue
++	 * where loading part of TF-A into SRAM using DMA silently fails.
++	 */
++	if (IS_ENABLED(CONFIG_XPL_BUILD) &&
++	    dev_read_bool(dev, "u-boot,spl-fifo-mode"))
++		host->flags &= ~USE_DMA;
++
++	return sdhci_probe(dev);
++}
++
++static int rockchip_sdhci_of_to_plat(struct udevice *dev)
++{
++	struct rockchip_sdhc_plat *plat = dev_get_plat(dev);
++	struct rockchip_sdhc *priv = dev_get_priv(dev);
++	struct mmc_config *cfg = &plat->cfg;
++	struct sdhci_host *host = &priv->host;
++	int ret;
++
++	host->name = dev->name;
++	host->ioaddr = dev_read_addr_ptr(dev);
++
++	ret = mmc_of_parse(dev, cfg);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static int rockchip_sdhci_bind(struct udevice *dev)
++{
++	struct rockchip_sdhc_plat *plat = dev_get_plat(dev);
++
++	return sdhci_bind(dev, &plat->mmc, &plat->cfg);
++}
++
++static const struct sdhci_data rk3399_data = {
++	.get_phy = rk3399_emmc_get_phy,
++	.set_control_reg = rk3399_sdhci_set_control_reg,
++	.set_ios_post = rk3399_sdhci_set_ios_post,
++	.set_enhanced_strobe = rk3399_sdhci_set_enhanced_strobe,
++};
++
++static const struct sdhci_data rk3528_data = {
++	.set_ios_post = rk3568_sdhci_set_ios_post,
++	.set_clock = rk3568_sdhci_set_clock,
++	.config_dll = rk3568_sdhci_config_dll,
++	.flags = FLAG_TAPVALUE_FROM_SW,
++	.hs200_txclk_tapnum = 0xc,
++	.hs400_txclk_tapnum = 0x6,
++	.hs400_cmdout_tapnum = 0x6,
++	.hs400_strbin_tapnum = 0x3,
++	.ddr50_strbin_delay_num = 0xa,
++};
++
++static const struct sdhci_data rk3568_data = {
++	.set_ios_post = rk3568_sdhci_set_ios_post,
++	.set_clock = rk3568_sdhci_set_clock,
++	.config_dll = rk3568_sdhci_config_dll,
++	.flags = FLAG_INVERTER_FLAG_IN_RXCLK,
++	.hs200_txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT,
++	.hs400_txclk_tapnum = 0x8,
++	.hs400_cmdout_tapnum = DLL_CMDOUT_TAPNUM_90_DEGREES,
++	.hs400_strbin_tapnum = DLL_STRBIN_TAPNUM_DEFAULT,
++	.ddr50_strbin_delay_num = DLL_STRBIN_DELAY_NUM_DEFAULT,
++};
++
++static const struct sdhci_data rk3576_data = {
++	.set_ios_post = rk3568_sdhci_set_ios_post,
++	.set_clock = rk3568_sdhci_set_clock,
++	.config_dll = rk3568_sdhci_config_dll,
++	.hs200_txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT,
++	.hs400_txclk_tapnum = 0x7,
++	.hs400_cmdout_tapnum = 0x7,
++	.hs400_strbin_tapnum = 0x5,
++	.ddr50_strbin_delay_num = 0xa,
++};
++
++static const struct sdhci_data rk3588_data = {
++	.set_ios_post = rk3568_sdhci_set_ios_post,
++	.set_clock = rk3568_sdhci_set_clock,
++	.config_dll = rk3568_sdhci_config_dll,
++	.hs200_txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT,
++	.hs400_txclk_tapnum = 0x9,
++	.hs400_cmdout_tapnum = DLL_CMDOUT_TAPNUM_90_DEGREES,
++	.hs400_strbin_tapnum = DLL_STRBIN_TAPNUM_DEFAULT,
++	.ddr50_strbin_delay_num = DLL_STRBIN_DELAY_NUM_DEFAULT,
++};
++
++static const struct udevice_id sdhci_ids[] = {
++	{
++		.compatible = "arasan,sdhci-5.1",
++		.data = (ulong)&rk3399_data,
++	},
++	{
++		.compatible = "rockchip,rk3528-dwcmshc",
++		.data = (ulong)&rk3528_data,
++	},
++	{
++		.compatible = "rockchip,rk3568-dwcmshc",
++		.data = (ulong)&rk3568_data,
++	},
++	{
++		.compatible = "rockchip,rk3576-dwcmshc",
++		.data = (ulong)&rk3576_data,
++	},
++	{
++		.compatible = "rockchip,rk3588-dwcmshc",
++		.data = (ulong)&rk3588_data,
++	},
++	{ }
++};
++
++U_BOOT_DRIVER(arasan_sdhci_drv) = {
++	.name		= "rockchip_sdhci_5_1",
++	.id		= UCLASS_MMC,
++	.of_match	= sdhci_ids,
++	.of_to_plat	= rockchip_sdhci_of_to_plat,
++	.ops		= &sdhci_ops,
++	.bind		= rockchip_sdhci_bind,
++	.probe		= rockchip_sdhci_probe,
++	.priv_auto	= sizeof(struct rockchip_sdhc),
++	.plat_auto	= sizeof(struct rockchip_sdhc_plat),
++};
+diff --git a/package/boot/uboot-h28k/src/dts/upstream/src/arm64/rockchip/rk3528-hinlink-h28k.dts b/package/boot/uboot-h28k/src/dts/upstream/src/arm64/rockchip/rk3528-hinlink-h28k.dts
+new file mode 100644
+index 00000000..e387da51
+--- /dev/null
++++ b/package/boot/uboot-h28k/src/dts/upstream/src/arm64/rockchip/rk3528-hinlink-h28k.dts
+@@ -0,0 +1,278 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++
++/dts-v1/;
++
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
++#include <dt-bindings/pwm/pwm.h>
++#include "rk3528.dtsi"
++
++/ {
++	model = "HINLINK H28K";
++	compatible = "hinlink,h28k", "rockchip,rk3528";
++
++	aliases {
++		ethernet0 = &gmac1;
++		mmc0 = &sdhci;
++		mmc1 = &sdmmc;
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:1500000n8";
++	};
++
++	keys {
++		compatible = "adc-keys";
++		io-channels = <&saradc 0>;
++		io-channel-names = "buttons";
++		keyup-threshold-microvolt = <1800000>;
++		poll-interval = <100>;
++
++		button-boot {
++			label = "BOOT";
++			linux,code = <KEY_SETUP>;
++			press-threshold-microvolt = <0>;
++		};
++	};
++
++	leds {
++		compatible = "gpio-leds";
++		pinctrl-names = "default";
++		pinctrl-0 = <&lan_led>, <&wan_led>, <&work_led>;
++
++		led-0 {
++			color = <LED_COLOR_ID_AMBER>;
++			function = LED_FUNCTION_LAN;
++			gpios = <&gpio4 RK_PC1 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "netdev";
++		};
++
++		led-1 {
++			color = <LED_COLOR_ID_BLUE>;
++			function = LED_FUNCTION_WAN;
++			gpios = <&gpio4 RK_PC0 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "netdev";
++		};
++
++		led-2 {
++			color = <LED_COLOR_ID_GREEN>;
++			function = LED_FUNCTION_STATUS;
++			gpios = <&gpio4 RK_PB7 GPIO_ACTIVE_LOW>;
++			linux,default-trigger = "default-on";
++		};
++	};
++
++	vdd_0v9: regulator-0v9-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd_0v9";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <900000>;
++		regulator-max-microvolt = <900000>;
++		vin-supply = <&vcc5v0_sys>;
++	};
++
++	vcc_ddr: regulator-1v1-vcc-ddr {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc_ddr";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <1100000>;
++		regulator-max-microvolt = <1100000>;
++		vin-supply = <&vcc5v0_sys>;
++	};
++
++	vcc_1v8: regulator-1v8-vcc {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc_1v8";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		vin-supply = <&vcc_3v3>;
++	};
++
++	vcc_3v3: regulator-3v3-vcc {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc_3v3";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		vin-supply = <&vcc5v0_sys>;
++	};
++
++	vcc3v3_sd: regulator-3v3-vcc-sd {
++		compatible = "regulator-fixed";
++		gpios = <&gpio4 RK_PA1 GPIO_ACTIVE_LOW>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&sdmmc_pwren_l>;
++		regulator-name = "vcc3v3_sd";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		vin-supply = <&vcc_3v3>;
++	};
++
++	vcc5v0_sys: regulator-5v0-vcc-sys {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc5v0_sys";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++	};
++
++	vccio_sd: regulator-vccio-sd {
++		compatible = "regulator-gpio";
++		gpios = <&gpio4 RK_PB6 GPIO_ACTIVE_HIGH>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&sdmmc_vol_ctrl_h>;
++		regulator-name = "vccio_sd";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <3300000>;
++		states = <1800000 0x0>, <3300000 0x1>;
++		vin-supply = <&vcc5v0_sys>;
++	};
++
++	vdd_arm: regulator-vdd-arm {
++		compatible = "pwm-regulator";
++		pwms = <&pwm1 0 5000 PWM_POLARITY_INVERTED>;
++		pwm-supply = <&vcc5v0_sys>;
++		regulator-name = "vdd_arm";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <746000>;
++		regulator-max-microvolt = <1201000>;
++		regulator-settling-time-up-us = <250>;
++	};
++
++	vdd_logic: regulator-vdd-logic {
++		compatible = "pwm-regulator";
++		pwms = <&pwm2 0 5000 PWM_POLARITY_INVERTED>;
++		pwm-supply = <&vcc5v0_sys>;
++		regulator-name = "vdd_logic";
++		regulator-always-on;
++		regulator-boot-on;
++		regulator-min-microvolt = <705000>;
++		regulator-max-microvolt = <1006000>;
++		regulator-settling-time-up-us = <250>;
++	};
++};
++
++&cpu0 {
++	cpu-supply = <&vdd_arm>;
++};
++
++&cpu1 {
++	cpu-supply = <&vdd_arm>;
++};
++
++&cpu2 {
++	cpu-supply = <&vdd_arm>;
++};
++
++&cpu3 {
++	cpu-supply = <&vdd_arm>;
++};
++
++&gmac1 {
++	clock_in_out = "output";
++	phy-handle = <&rgmii_phy>;
++	phy-mode = "rgmii-id";
++	phy-supply = <&vcc_3v3>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&rgmii_miim>,
++		    <&rgmii_tx_bus2>,
++		    <&rgmii_rx_bus2>,
++		    <&rgmii_rgmii_clk>,
++		    <&rgmii_rgmii_bus>;
++	status = "okay";
++};
++
++&mdio1 {
++	rgmii_phy: ethernet-phy@1 {
++		compatible = "ethernet-phy-ieee802.3-c22";
++		reg = <0x1>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&gmac1_rstn_l>;
++		reset-assert-us = <20000>;
++		reset-deassert-us = <100000>;
++		reset-gpios = <&gpio4 RK_PC2 GPIO_ACTIVE_LOW>;
++	};
++};
++
++&pinctrl {
++	gmac {
++		gmac1_rstn_l: gmac1-rstn-l {
++			rockchip,pins = <4 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++	};
++
++	leds {
++		lan_led: lan-led {
++			rockchip,pins = <4 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++
++		wan_led: wan-led {
++			rockchip,pins = <4 RK_PC0 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++
++		work_led: work-led {
++			rockchip,pins = <4 RK_PB7 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++	};
++
++	sdmmc {
++		sdmmc_pwren_l: sdmmc-pwren-l {
++			rockchip,pins = <4 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++
++		sdmmc_vol_ctrl_h: sdmmc-vol-ctrl-h {
++			rockchip,pins = <4 RK_PB6 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++	};
++};
++
++&pwm1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pwm1m0_pins>;
++	status = "okay";
++};
++
++&pwm2 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pwm2m0_pins>;
++	status = "okay";
++};
++
++&saradc {
++	vref-supply = <&vcc_1v8>;
++	status = "okay";
++};
++
++&sdhci {
++	bus-width = <8>;
++	cap-mmc-highspeed;
++	mmc-hs200-1_8v;
++	non-removable;
++	vmmc-supply = <&vcc_3v3>;
++	vqmmc-supply = <&vcc_1v8>;
++	status = "okay";
++};
++
++&sdmmc {
++	bus-width = <4>;
++	cap-sd-highspeed;
++	disable-wp;
++	sd-uhs-sdr104;
++	vmmc-supply = <&vcc3v3_sd>;
++	vqmmc-supply = <&vccio_sd>;
++	status = "okay";
++};
++
++&uart0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart0m0_xfer>;
++	status = "okay";
++};

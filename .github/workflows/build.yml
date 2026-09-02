@@ -1,0 +1,62 @@
+name: 编译 HINLINK H28K 固件
+
+# 托管运行器入口：每周定时构建全部支持系列，也可手动触发。
+# 矩阵准备任务把手动参数解析成系列列表，再按系列并行调用可复用流水线。
+
+on:
+  schedule:
+    - cron: '23 21 * * 0'
+  workflow_dispatch:
+    inputs:
+      series:
+        description: '要构建的 ImmortalWrt 系列'
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - 24.10
+          - 25.12
+      exact_version:
+        description: '固定版本（可选，如 v24.10.6；填写后只构建该版本所属系列）'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-hinlink-h28k
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: 解析构建矩阵
+    runs-on: ubuntu-24.04
+    outputs:
+      series: ${{ steps.resolve.outputs.series }}
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 解析系列列表
+        id: resolve
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/resolve_series.sh" \
+            "${{ inputs.series || 'all' }}" \
+            "${{ inputs.exact_version }}" \
+            "$GITHUB_OUTPUT"
+
+  build:
+    name: 编译 ${{ matrix.series }} 系列固件
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ${{ fromJSON(needs.matrix.outputs.series) }}
+    uses: ./.github/workflows/build-firmware.yml
+    with:
+      series: ${{ matrix.series }}
+      exact_version: ${{ inputs.exact_version }}
+    secrets: inherit

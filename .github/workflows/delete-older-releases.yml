@@ -1,0 +1,57 @@
+name: 清理历史 Release
+
+# 每个系列只保留最近 N 个固件 Release（自 amlogic-s9xxx-openwrt 的
+# delete-older-releases 思路移植，改为按系列保留），避免 Release 列表无限增长。
+
+on:
+  schedule:
+    - cron: '53 23 * * 0'
+  workflow_dispatch:
+    inputs:
+      keep_per_series:
+        description: '每个系列保留的最近 Release 数量'
+        type: string
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: 按系列清理旧 Release
+    runs-on: ubuntu-24.04
+    env:
+      KEEP_PER_SERIES: ${{ inputs.keep_per_series || '3' }}
+    steps:
+      - name: 清理
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          keep="$KEEP_PER_SERIES"
+          [[ "$keep" =~ ^[0-9]+$ ]] || { echo "无效的保留数量: $keep"; exit 1; }
+
+          releases="$(gh api --paginate "repos/{owner}/{repo}/releases" \
+            --jq '.[] | select(.draft == false) | [(.tag_name), (.id | tostring)] | @tsv')"
+          declare -A seen
+          while IFS=$'\t' read -r tag id; do
+            [[ -n "$tag" ]] || continue
+            ver_date="${tag#h28k-v}"
+            version="${ver_date%%-*}"
+            if ! [[ "$version" =~ ^(24\.10|25\.12)\.[0-9]+$ ]]; then
+              echo "跳过非固件 Release: $tag"
+              continue
+            fi
+            series="${version%.*}"
+            seen[$series]=$(( ${seen[$series]:-0} + 1 ))
+            if (( seen[$series] > keep )); then
+              echo "删除旧 Release: $tag"
+              gh api -X DELETE "repos/{owner}/{repo}/releases/$id"
+              gh api -X DELETE "repos/{owner}/{repo}/git/refs/tags/$tag" 2>/dev/null ||
+                echo "标签已不存在: $tag"
+            fi
+          done <<< "$releases"
+
+          echo "清理完成（每系列保留最近 $keep 个）"

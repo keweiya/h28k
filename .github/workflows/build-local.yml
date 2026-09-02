@@ -1,0 +1,62 @@
+name: 自托管编译 HINLINK H28K 固件
+
+# 自托管运行器入口：手动触发，矩阵逻辑与托管版一致，
+# 复用同一个可复用流水线，仅切换运行器标签并关闭磁盘清理。
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: '要构建的 ImmortalWrt 系列'
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - 24.10
+          - 25.12
+      exact_version:
+        description: '固定版本（可选，如 v24.10.6；填写后只构建该版本所属系列）'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-local-hinlink-h28k
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: 解析构建矩阵
+    runs-on: ubuntu-24.04
+    outputs:
+      series: ${{ steps.resolve.outputs.series }}
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 解析系列列表
+        id: resolve
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/resolve_series.sh" \
+            "${{ inputs.series || 'all' }}" \
+            "${{ inputs.exact_version }}" \
+            "$GITHUB_OUTPUT"
+
+  build:
+    name: 编译 ${{ matrix.series }} 系列固件
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ${{ fromJSON(needs.matrix.outputs.series) }}
+    uses: ./.github/workflows/build-firmware.yml
+    with:
+      series: ${{ matrix.series }}
+      exact_version: ${{ inputs.exact_version }}
+      runs_on: '["self-hosted", "Linux", "X64", "h28k-builder"]'
+      cleanup_disk: false
+    secrets: inherit

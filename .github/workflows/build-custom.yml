@@ -34,11 +34,11 @@ on:
         description: '固件根目录大小'
         type: choice
         required: true
-        default: '2048'
+        default: 2G
         options:
-          - '512'
-          - '1024'
-          - '2048'
+          - 2G
+          - 1G
+          - 512M
 
 permissions:
   contents: write

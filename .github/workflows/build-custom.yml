@@ -1,0 +1,98 @@
+name: 快速定制构建（ImageBuilder）
+
+# 阶段 2：用基础 Release 附带的自建 ImageBuilder 分钟级组装定制固件。
+# 不编译任何源码，内核与 kmod 与基础构建完全一致（ABI 不变）。
+# 前提：对应系列的某个固件 Release 已附带 immortalwrt-imagebuilder-*.tar.xz
+# （由"编译 HINLINK H28K 固件"工作流生成）。
+# 包列表与首启配置见 config/ib-packages.list 与 config/firmware.conf。
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: '基础固件系列（决定使用哪个 ImageBuilder）'
+        type: choice
+        required: true
+        default: 25.12
+        options:
+          - 24.10
+          - 25.12
+      base_release:
+        description: '基础 Release 标签（可选，如 h28k-v25.12.1-20260903，留空自动选最新含 ImageBuilder 的 Release）'
+        type: string
+        required: false
+        default: ''
+      publish_release:
+        description: '发布为 Release（关闭时仅上传 Artifact，避免 Release 列表膨胀）'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-custom-hinlink-h28k
+  cancel-in-progress: false
+
+jobs:
+  custom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 选择基础 Release
+        id: base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ -n "${{ inputs.base_release }}" ]]; then
+            tag="${{ inputs.base_release }}"
+            # 先完整捕获再取第一个：管道接 head 会在 pipefail 下触发 SIGPIPE
+            urls="$(gh api "repos/{owner}/{repo}/releases/tags/$tag" \
+              --jq '.assets[] | select(.name | startswith("immortalwrt-imagebuilder-rockchip-armv8.")) | .browser_download_url')"
+            url="${urls%%$'\n'*}"
+            [[ -n "$url" ]] || { echo "Release ${tag} 没有自建 ImageBuilder 附件"; exit 1; }
+          else
+            bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
+              "${{ inputs.series }}" "$GITHUB_OUTPUT"
+            tag="$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")"
+            url="$(sed -n 's/^asset_url=//p' "$GITHUB_OUTPUT")"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: 下载 ImageBuilder
+        run: |
+          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
+          ls -lh ib.tar.xz
+
+      - name: 组装定制固件
+        run: |
+          mkdir out
+          bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
+            ib.tar.xz \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            "$GITHUB_WORKSPACE/out"
+
+      - name: 上传定制固件构件
+        uses: actions/upload-artifact@v4
+        with:
+          name: H28K 定制固件-${{ steps.base.outputs.tag }}
+          path: out/*sysupgrade*.img.gz
+          retention-days: 30
+
+      - name: 发布定制固件 Release
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CUSTOM_TAG="h28k-custom-${{ steps.base.outputs.tag }}-$(TZ=Asia/Hong_Kong date +'%H%M%S')"
+          echo "CUSTOM_TAG=$CUSTOM_TAG" >> "$GITHUB_ENV"
+          gh release create "$CUSTOM_TAG" out/*sysupgrade*.img.gz \
+            --title "H28K 定制固件（基于 ${{ steps.base.outputs.tag }}）" \
+            --notes "用自建 ImageBuilder 组装的定制固件，包列表见仓库 config/ib-packages.list，内核与 ${{ steps.base.outputs.tag }} 完全一致（ABI 不变）。"

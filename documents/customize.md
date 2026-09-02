@@ -19,11 +19,28 @@ git clone --depth=1 -b main https://github.com/nikkinikki-org/OpenWrt-nikki.git 
 git clone --depth=1 https://github.com/LazuliKao/luci-theme-fluent.git package/luci-theme-fluent
 ```
 
-这些包不经过 feeds，直接随源码编译，不影响内核 ABI。
+这些包不经过 feeds，直接随源码编译，不影响内核 ABI，并会自动打包进自建 ImageBuilder 供阶段 2（快速定制构建）使用。
+
+## config/ib-packages.list（快速定制构建的包列表）
+
+阶段 2 在设备默认包之上追加安装的软件包，每行一个：
+
+```
+luci-app-nikki
+luci-theme-fluent
+kmod-mt7921u
+openssh-sftp-server
+```
+
+- 包来源：自建 ImageBuilder 内置包（阶段 1 编译的 nikki、fluent 等）+ 官方软件源（组装时联网拉取）。
+- 包版本冻结在阶段 1 构建时刻，升级包需重跑一次阶段 1。
+- **kmod 只能选择官方源已有的包**——IB 内核与阶段 1 完全一致（ABI 不变），但阶段 2 没有源码编译环节。
+- 想把默认 `wpad-basic-mbedtls` 换成 `wpad-openssl`：加 `-wpad-basic-mbedtls` 和 `wpad-openssl` 两行；若该版本 ImageBuilder 不支持负号移除默认包（会显式报错），删掉这两行即可——默认 wpad 同样能驱动 MT7921U。
+- 阶段 2 只需要维护这一个文件：LAN IP / root 密码 / 默认主题自动取自 `config/firmware.conf`，以首启 `uci-defaults` 方式注入，与阶段 1 编译期注入效果相同。
 
 ## config/hinlink-h28k.config（设备选包种子）
 
-保存目标、软件包和分区配置（`CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y` 等）。构建时与官方 `config.buildinfo` 中的内核选项合成最终 `.config`。
+保存目标、软件包和分区配置（`CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y` 等）。构建时与官方 `config.buildinfo` 中的内核选项合成最终 `.config`。末尾的 `CONFIG_IB=y` 让阶段 1 构建完成后顺带产出自建 ImageBuilder——这是构建系统选项，不参与内核配置，不影响 ABI。
 
 **选包规则（重要）**：
 

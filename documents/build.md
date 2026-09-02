@@ -1,13 +1,33 @@
 # 构建说明
 
+## 两段式构建
+
+```
+阶段 1 · 全量源码构建（build.yml / build-local.yml / build-firmware.yml）
+  官方源码 + H28K 补丁全量编译 → check-abi 门禁
+  → Release：sysupgrade 固件 + 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
+  耗时 1.5~3 小时；仅在官方发新版或手动触发时需要执行
+
+阶段 2 · 快速定制构建（build-custom.yml）
+  下载自建 ImageBuilder → 注入 IP/密码/主题 → 按 config/ib-packages.list 装包
+  → make image 组装 → 定制 sysupgrade 固件
+  耗时约 5 分钟；改包组合、迭代配置用这个
+```
+
+两段的内核和 kmod 完全相同（阶段 2 不编译任何源码），ABI 一致。为什么必须用**自建** ImageBuilder：官方 IB 没有 `hinlink_h28k` 设备与 H28K 的 DTB/u-boot，预编译内核也无法打补丁重建。
+
+阶段 1 的产物同时发布固件与 ImageBuilder 附件，因此**每次官方点版本更新只需跑一次阶段 1**，之后的定制都走阶段 2。
+
 ## 工作流总览
 
-| 工作流 | 运行器 | 触发方式 | 作用 |
-| --- | --- | --- | --- |
-| 编译 HINLINK H28K 固件（build.yml） | GitHub 托管 `ubuntu-24.04` | 每周日定时 + 手动 | 解析系列矩阵，并行构建所选系列 |
-| 自托管编译（build-local.yml） | 自托管 `h28k-builder` | 手动 | 同上，运行在自己的机器上 |
-| 编译固件（build-firmware.yml） | 由上面两者调用 | 不直接触发 | 单系列完整流水线（可复用） |
-| 清理历史 Release | GitHub 托管 | 每周日定时 + 手动 | 每系列保留最近 N 个 Release |
+| 工作流 | 运行器 | 触发方式 | 作用 | 耗时（量级） |
+| --- | --- | --- | --- | --- |
+| 编译 HINLINK H28K 固件（build.yml） | GitHub 托管 `ubuntu-24.04` | 每周日定时 + 手动 | 阶段 1：解析系列矩阵，并行构建；同版本已发布则自动跳过 | 全新 1.5~3h，跳过时秒级 |
+| 自托管编译（build-local.yml） | 自托管 `h28k-builder` | 手动 | 同上，运行在自己的机器上 | 取决于机器 |
+| 快速定制构建（build-custom.yml） | GitHub 托管 | 手动 | 阶段 2：用自建 ImageBuilder 组装定制固件 | ~5 分钟 |
+| 清理历史 Release | GitHub 托管 | 每周日定时 + 手动 | 每系列保留最近 N 个 Release | 秒级 |
+
+`build-firmware.yml` 是阶段 1 的可复用单系列流水线，由前两个工作流调用，不直接触发。
 
 ## 手动触发参数
 
@@ -18,7 +38,22 @@
 
 **固定版本**（可选）：填写精确版本号，如 `v24.10.6` 或 `25.12.1`（`v` 前缀可省略）。填写后只构建该版本所属的系列；留空则自动选择该系列最新的、官方 kmods 仍然可用的正式版。
 
-不填固定版本时，构建结果跟随官方 release：官方发布新点版本后，下一次定时构建自动跟上。如果上游变动导致补丁不再适用，`git apply --3way` 会显式失败并留下 `.rej` 文件，构建红叉即回归信号。
+**强制重建**（force_build，可选）：阶段 1 在解析版本后会检查该版本是否已发过固件 Release，已发布则整个构建自动跳过——每周定时构建因此几乎零成本。官方发布新点版本后自动恢复真实构建。需要重新出包（比如改了 `firmware.conf` 或补丁）时勾选 force_build。
+
+不填固定版本时，构建结果跟随官方 release。如果上游变动导致补丁不再适用，`git apply --3way` 会显式失败并留下 `.rej` 文件，构建红叉即回归信号。
+
+## 快速定制构建（阶段 2）参数
+
+- **基础固件系列**：使用哪个系列的 ImageBuilder。
+- **基础 Release 标签**（可选）：留空自动选该系列最新的、附带 ImageBuilder 的 Release。
+- **发布为 Release**：默认关闭（只上传 Artifact，避免 Release 列表膨胀）；开启后以 `h28k-custom-<基础标签>-<时间>` 为标签发布。
+
+定制内容在仓库文件中修改，不在工作流参数里：
+
+- 软件包：`config/ib-packages.list`（在设备默认包之上追加）。
+- LAN IP / root 密码 / 默认主题：复用 `config/firmware.conf`，以首启 `uci-defaults` 方式注入（与阶段 1 编译期注入效果相同）。
+
+阶段 2 的软件包版本冻结在阶段 1 构建时刻（nikki、主题等自编译包在 IB 内）；要升级这些包，重跑一次阶段 1 即可。
 
 ## 产物
 
@@ -27,7 +62,12 @@
 - `h28k-v24.10.6-20260906`
 - `h28k-v25.12.1-20260906`
 
-Release 附件为 `bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz`，Release 说明中记录上游 commit、管理地址和 root 密码。25.12 为主力系列，其 Release 会标记为仓库 latest。
+Release 附件包含两类文件：
+
+- `bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz`：默认配置固件。
+- `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz`：**自建 ImageBuilder**，供"快速定制构建"工作流（阶段 2）使用。
+
+Release 说明中记录上游 commit、管理地址和 root 密码。25.12 为主力系列，其 Release 会标记为仓库 latest。
 
 托管构建同时上传 30 天保留期的 Artifact，失败时上传 7 天保留期的编译日志。
 

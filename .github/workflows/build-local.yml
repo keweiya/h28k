@@ -20,6 +20,11 @@ on:
         type: string
         required: false
         default: ''
+      force_build:
+        description: '强制重新构建（忽略"该版本已发布"自动跳过）'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -57,6 +62,7 @@ jobs:
     with:
       series: ${{ matrix.series }}
       exact_version: ${{ inputs.exact_version }}
+      force_build: ${{ inputs.force_build || false }}
       runs_on: '["self-hosted", "Linux", "X64", "h28k-builder"]'
       cleanup_disk: false
     secrets: inherit

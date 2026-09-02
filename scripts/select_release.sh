@@ -14,10 +14,11 @@ source "$SCRIPT_DIR/config.sh"
 
 resolve_official_kmods() {
   local version="$1" kmods
+  # 先完整捕获再取第一行：管道接 head 会在 pipefail 下触发 SIGPIPE
   kmods="$(curl -fsSL \
     "https://downloads.immortalwrt.org/releases/$version/targets/rockchip/armv8/kmods/" \
-    | sed -nE 's#.*href="([^"]*-[0-9a-f]{32})/".*#\1#p' \
-    | head -n 1)"
+    | sed -nE 's#.*href="([^"]*-[0-9a-f]{32})/".*#\1#p')"
+  kmods="${kmods%%$'\n'*}"
   [[ "$kmods" =~ -[0-9a-f]{32}$ ]] || return 1
   printf '%s\n' "$kmods"
 }

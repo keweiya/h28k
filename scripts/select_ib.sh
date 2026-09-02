@@ -45,7 +45,7 @@ version="${ver_date%%-*}"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   fail "cannot parse version from release tag: $base_tag"
 
-# 匹配该版本的插件包附件（取最新发布的那个）
+# 匹配该版本的插件包附件（取最新发布的那个）；没有插件包时留空（组装纯官方固件）
 pkg_urls="$(gh api --paginate "repos/{owner}/{repo}/releases" --jq '
   .[]
   | select(.draft == false)
@@ -53,8 +53,9 @@ pkg_urls="$(gh api --paginate "repos/{owner}/{repo}/releases" --jq '
   | select(.name == "h28k-packages-v'"$version"'.tar.gz")
   | .browser_download_url')"
 packages_url="${pkg_urls%%$'\n'*}"
-[[ -n "$packages_url" ]] ||
-  fail "未找到 $version 的插件包附件（h28k-packages-v$version.tar.gz），请先运行「构建插件包」工作流"
+if [[ -z "$packages_url" ]]; then
+  echo "注意：未找到 $version 的插件包附件，将组装不含源码插件的固件（可在 source-plugins.list 启用插件后运行「构建插件包」）" >&2
+fi
 
 {
   echo "tag=$base_tag"

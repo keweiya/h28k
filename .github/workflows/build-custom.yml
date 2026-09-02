@@ -76,8 +76,14 @@ jobs:
       - name: 下载 ImageBuilder 与插件包
         run: |
           curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.xz
-          curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
-          ls -lh ib.tar.xz plugins.tar.gz
+          if [[ -n "${{ steps.base.outputs.packages_url }}" ]]; then
+            curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
+            echo "PLUGINS_ARG=plugins.tar.gz" >> "$GITHUB_ENV"
+          else
+            echo "该版本尚无插件包附件，组装不含源码插件的固件（在 config/source-plugins.list 启用插件后跑「构建插件包」）"
+            echo "PLUGINS_ARG=" >> "$GITHUB_ENV"
+          fi
+          ls -lh ib.tar.xz
 
       - name: 组装定制固件
         env:
@@ -91,7 +97,7 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            plugins.tar.gz
+            "$PLUGINS_ARG"
 
       - name: 上传定制固件构件
         uses: actions/upload-artifact@v4

@@ -186,7 +186,6 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/build_config.sh" prepare \
             . \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "" \
             "$GITHUB_ENV"
 
       - name: 准备内核配置

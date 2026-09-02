@@ -6,22 +6,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 source "$SCRIPT_DIR/config.sh"
 
-clone_extra_packages() {
-  local source_dir="$1" list="$2" line
-  local -a command
-  [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
-  [[ -f "$list" ]] || fail "package list not found: $list"
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'\r'}"
-    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    read -r -a command <<< "$line"
-    [[ "${command[0]:-}" == git && "${command[1]:-}" == clone ]] ||
-      fail "only git clone commands are allowed: $line"
-    (cd "$source_dir" && "${command[@]}")
-  done < "$list"
-}
-
 apply_device_config() {
   local source_dir="$1" lan_ip_value="$2" password_value="$3" theme="$4"
   local shadow password_hash
@@ -49,13 +33,9 @@ enable_official_kmods() {
 }
 
 prepare() {
-  local source_dir="$1" config_file="$2" packages_file="$3" github_env="$4"
+  local source_dir="$1" config_file="$2" github_env="$3"
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
-  # packages_file 为空表示本阶段不克隆源码包（第三方插件改由 SDK 工作流单独编译）
-  if [[ -n "$packages_file" ]]; then
-    clone_extra_packages "$source_dir" "$packages_file"
-  fi
   apply_device_config "$source_dir" "$lan_ip" "$password" "$default_theme"
   [[ "$check_official_abi" == true ]] && enable_official_kmods "$source_dir"
   printf 'FIRMWARE_LAN_IP=%s\nFIRMWARE_PASSWORD=%s\n' "$lan_ip" "$password" >> "$github_env"
@@ -85,14 +65,42 @@ check_abi() {
     fail "kernel ABI does not match official release $version"
 }
 
+# 解析源码插件清单（config/source-plugins.list）：
+# 执行其中的 clone: 行（把源码克隆进 SDK 源码树），并把要编译的包名打印到 stdout。
+run_source_plugins() {
+  local sdk_dir="$1" list_file="$2" line cmd name
+  local -a command names=()
+  [[ -d "$sdk_dir" ]] || fail "SDK directory not found: $sdk_dir"
+  [[ -f "$list_file" ]] || fail "source plugins list not found: $list_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" == clone:* ]]; then
+      cmd="$(trim "${line#clone:}")"
+      read -r -a command <<< "$cmd"
+      [[ "${command[0]:-}" == git && "${command[1]:-}" == clone ]] ||
+        fail "clone lines must be git clone commands: $line"
+      (cd "$sdk_dir" && "${command[@]}")
+    else
+      names+=("$line")
+    fi
+  done < "$list_file"
+
+  for name in "${names[@]}"; do
+    printf '%s\n' "$name"
+  done
+}
+
 case "${1:-}" in
   prepare)
-    [[ $# -eq 5 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <packages.conf> <github-env>"
-    prepare "$2" "$3" "$4" "$5"
+    [[ $# -eq 4 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env>"
+    prepare "$2" "$3" "$4"
     ;;
-  clone-packages)
-    [[ $# -eq 3 ]] || fail "usage: $0 clone-packages <source-dir> <packages.conf>"
-    clone_extra_packages "$2" "$3"
+  source-plugins)
+    [[ $# -eq 3 ]] || fail "usage: $0 source-plugins <sdk-dir> <source-plugins.list>"
+    run_source_plugins "$2" "$3"
     ;;
   check-abi)
     [[ $# -eq 6 ]] || fail "usage: $0 check-abi <source-dir> <firmware.conf> <version> <tag> <kmods-directory>"

@@ -1,10 +1,9 @@
 # 快速定制构建（build-custom 工作流）在设备默认包之上追加安装的软件包，每行一个。
-# 包来源：插件包 Release（SDK 编译的 nikki/fluent，24.10 为 .ipk、25.12 为 .apk，自动匹配）
-# 与官方软件源（组装时联网拉取 kmod 和官方包）。
+# 【只填官方源已有的包】——源码第三方插件（nikki 等）写在 config/source-plugins.list，
+# 构建插件包后在阶段 2 自动安装，不要重复写在这里。
 # 注意：kmod 只能选择官方源已有的包，且与基础构建的内核 ABI 一致。
 # 如需替换默认 wpad：添加 "-wpad-basic-mbedtls" 和 "wpad-openssl" 两行（若 IB 不支持
 # 负号移除会报错，此时删掉这两行即可，默认 wpad-basic 同样支持 MT7921U）。
-luci-app-nikki
-luci-theme-fluent
 kmod-mt7921u
+wpad-openssl
 openssh-sftp-server

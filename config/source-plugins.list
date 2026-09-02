@@ -1,0 +1,23 @@
+# 源码插件清单 —— 官方源码库里没有的第三方插件的唯一配置入口
+#
+# 格式：
+#   - "clone: " 开头的行：git clone 命令，把插件源码克隆进 SDK 源码树（每个仓库一行）
+#   - 其他非注释行：要编译并安装进固件的软件包名（make package/<名称>/compile 的目标名）
+#
+# 使用方法：
+#   - 启用插件：取消注释对应 clone 行和包名行（每个插件 = 1 个 clone 行 + 1 个包名行）
+#   - 改完后重跑「构建插件包」工作流（可勾选"编译完插件后立即组装固件"一步出固件）
+#   - 这里启用的插件在阶段 2 组装固件时自动安装，不要重复写进 ib-packages.list
+#     （那个文件只放官方源已有的包）
+#   - 注意：不要填官方包的子包名（如 openssh-sftp-server 是 openssh 的子包，目标名对不上会失败）
+#   - kmod 一律不要写在这里（kmod 由官方源在组装固件时提供，ABI 才一致）
+#
+# 默认全部注释（固件保持纯净的官方组件）；以下为启用示例。
+
+# —— nikki（mihomo 代理）：取消注释以下两行启用 ——
+# clone: git clone --depth=1 -b main https://github.com/nikkinikki-org/OpenWrt-nikki.git package/OpenWrt-nikki
+# luci-app-nikki
+
+# —— fluent LuCI 主题：取消注释以下两行启用（启用后可在 firmware.conf 的 default_theme 填 fluent）——
+# clone: git clone --depth=1 https://github.com/LazuliKao/luci-theme-fluent.git package/luci-theme-fluent
+# luci-theme-fluent

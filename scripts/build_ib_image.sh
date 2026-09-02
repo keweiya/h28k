@@ -67,6 +67,14 @@ mkdir -p files/etc/uci-defaults
 chmod +x files/etc/uci-defaults/99-h28k-setup
 
 packages="$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$packages_list" | tr '\n' ' ')"
+# 源码插件：插件包内附 packages.list（构建插件包时写入的包名清单）自动并入安装列表，
+# 因此 source-plugins.list 里启用的插件无需写进 ib-packages.list
+if [[ -n "$plugins_tarball" && -f "$plugins_dir/packages.list" ]]; then
+  plugin_names="$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$plugins_dir/packages.list" | tr '\n' ' ')"
+  packages="$packages $plugin_names"
+fi
+# 去重
+packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 echo "=== 组装镜像（PROFILE=hinlink_h28k） ==="
 echo "    额外软件包: ${packages:-（无）}"
 make image \

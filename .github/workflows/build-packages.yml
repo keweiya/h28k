@@ -101,21 +101,25 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 克隆插件源码
+      - name: 解析源码插件清单
+        id: plugins
         working-directory: sdk
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/build_config.sh" clone-packages \
-            . "$GITHUB_WORKSPACE/config/packages.conf"
+          names=($(bash "$GITHUB_WORKSPACE/scripts/build_config.sh" source-plugins \
+            . "$GITHUB_WORKSPACE/config/source-plugins.list"))
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::notice::config/source-plugins.list 没有启用的源码插件（默认全部注释），本次不编译不发布"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "${names[@]}" | tee plugin-names.txt
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 编译插件
+        if: steps.plugins.outputs.built == 'true'
         working-directory: sdk
         run: |
-          names=($(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' \
-            "$GITHUB_WORKSPACE/config/sdk-packages.list"))
-          if [ "${#names[@]}" -eq 0 ]; then
-            echo "sdk-packages.list 为空，没有需要编译的插件"
-            exit 1
-          fi
+          names=($(cat plugin-names.txt))
           for name in "${names[@]}"; do
             echo "CONFIG_PACKAGE_${name}=y" >> .config
           done
@@ -131,11 +135,14 @@ jobs:
           done
 
       - name: 收集插件包
+        if: steps.plugins.outputs.built == 'true'
         run: |
           mkdir stage
           # 24.10 产出 .ipk（opkg），25.12 产出 .apk（apk），按版本自动匹配；
           # kmod 由官方源在组装固件时提供，SDK 编译的 kmod 不收集，避免版本混淆
           find sdk/bin/packages \( -name '*.ipk' -o -name '*.apk' \) ! -name 'kmod-*' -exec cp {} stage/ \;
+          # 包名清单随包发布，阶段 2 组装固件时按它自动安装
+          cp sdk/plugin-names.txt stage/packages.list
           count=$(find stage \( -name '*.ipk' -o -name '*.apk' \) | wc -l)
           if [ "$count" -eq 0 ]; then
             echo "没有收集到任何插件包"
@@ -146,6 +153,7 @@ jobs:
           tar -czf "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" -C stage .
 
       - name: 上传插件包构件
+        if: steps.plugins.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: H28K 插件包-v${{ steps.release.outputs.version }}
@@ -153,7 +161,7 @@ jobs:
           retention-days: 30
 
       - name: 发布插件包 Release
-        if: inputs.publish_release
+        if: inputs.publish_release && steps.plugins.outputs.built == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -161,7 +169,7 @@ jobs:
           PKG_TAG="h28k-packages-v${{ steps.release.outputs.version }}-$PKG_DATE"
           gh release create "$PKG_TAG" "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz" \
             --title "H28K 插件包 v${{ steps.release.outputs.version }} ($PKG_DATE)" \
-            --notes "基于官方 SDK 编译的第三方插件（$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ') 及依赖）。
+            --notes "基于官方 SDK 编译的第三方插件（$(cat sdk/plugin-names.txt | tr '\n' ' ') 及依赖）。
           - 供「快速定制构建」工作流注入 ImageBuilder；kmod 由官方源在组装时提供
           - 基于上游 ${{ steps.release.outputs.tag }}"
 
@@ -188,13 +196,15 @@ jobs:
           CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
         run: |
           mkdir out
-          # 直接使用本次编译出的插件包（无需再从 Release 下载）
+          # 直接使用本次编译出的插件包（无需再从 Release 下载）；未启用插件时组装纯官方固件
+          plugins_file="h28k-packages-v${{ steps.release.outputs.version }}.tar.gz"
+          [ -f "$plugins_file" ] || plugins_file=""
           bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
             ib.tar.xz \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "h28k-packages-v${{ steps.release.outputs.version }}.tar.gz"
+            "$plugins_file"
 
       - name: 上传固件构件
         if: inputs.build_firmware
@@ -209,10 +219,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ -f sdk/plugin-names.txt ]; then
+            names="启用插件：$(cat sdk/plugin-names.txt | tr '\n' ' ')"
+          else
+            names="未启用源码插件（纯官方组件）"
+          fi
           FW_TAG="h28k-custom-v${{ steps.release.outputs.version }}-$(TZ=Asia/Hong_Kong date +'%Y%m%d%H%M%S')"
           gh release create "$FW_TAG" out/*sysupgrade*.img.gz \
             --title "H28K 定制固件（基于 v${{ steps.release.outputs.version }}）" \
             --notes "本插件包工作流一次完成：SDK 编译插件 + ImageBuilder 组装。
-          - 插件：$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$GITHUB_WORKSPACE/config/sdk-packages.list" | tr '\n' ' ')（ib-packages.list 全量清单见仓库）
+          - $names（ib-packages.list 全量清单见仓库）
           - 内核与上游 ${{ steps.release.outputs.tag }} 完全一致（ABI 不变）
           - 管理地址/root 密码见本次运行输入"

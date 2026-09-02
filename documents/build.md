@@ -26,7 +26,7 @@
 | Release 标签 | 生成者 | 附件 | 保留策略 |
 | --- | --- | --- | --- |
 | `h28k-v<版本>-<日期>`（如 `h28k-v25.12.1-20260906`） | 阶段 1 | ① 基础固件 `*-hinlink_h28k-sysupgrade.img.gz`（官方源组件，**不含第三方插件**；如配方支持会有 ext4 变体）② `*-rootfs.tar.gz` 根目录 tar 包（不含内核，可直接用于 LXC/容器）③ 自建 ImageBuilder `immortalwrt-imagebuilder-rockchip-armv8.*.tar.xz` | 每系列保留最近 3 个 |
-| `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的 `luci-app-nikki`、`nikki`（mihomo 核心）、`luci-theme-fluent` 及其用户态依赖（24.10 为 .ipk，25.12 为 .apk，自动匹配；不含 kmod） | 保留最近 3 个 |
+| `h28k-packages-v<版本>-<日期>` | 插件包工作流 | `h28k-packages-v<版本>.tar.gz`：SDK 编译的源码插件及依赖（24.10 为 .ipk，25.12 为 .apk，自动匹配；不含 kmod）。**默认 `source-plugins.list` 全注释，不产生此 Release**；启用插件并重跑后才有 | 保留最近 3 个 |
 | `h28k-custom-<基础标签>-<时间>` | 阶段 2 / 插件包工作流的固件开关 | 定制固件 `*-hinlink_h28k-sysupgrade.img.gz`（基础 + 插件 + 你的参数） | 保留最近 3 个 |
 
 关于格式：24.10.x 使用 opkg/ipk，25.12.x 已切换到 apk/apk。插件包工作流收集哪种格式取决于该版本 SDK 的产出，组装时也由对应版本的包管理器安装，全程无需人工区分。
@@ -78,7 +78,8 @@
 
 定制内容也可以在仓库文件中预先改好：
 
-- 软件包：`config/ib-packages.list`（在设备默认包之上追加）。
+- 官方源包：`config/ib-packages.list`（只填官方源已有的包）。
+- 源码插件：`config/source-plugins.list` 启用后由插件包 Release 自动带入并安装，**不需要写进 ib-packages.list**。
 - LAN IP / root 密码 / 默认主题：`config/firmware.conf`，以首启 `uci-defaults` 方式注入（与阶段 1 编译期注入效果相同）。
 - 根目录大小：通过 `ROOTFS_PARTSIZE` 传给 ImageBuilder；若所用 IB 版本不支持该覆盖，则以基础构建时的根目录大小为准。
 

@@ -63,7 +63,7 @@
 ```
 
 - **阶段 1**：Actions → 编译 HINLINK H28K 固件 → 选系列（`all` / `24.10` / `25.12`），可选填精确版本、LAN 地址、root 密码、根目录大小（512M/1G/2G）。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
-- **插件包**：Actions → 构建插件包 → 选系列。nikki / fluent 主题等源码插件用官方 SDK 单独编译并长期保存到 Release；nikki 更新时只需重跑这个（约 15~30 分钟），不用重编固件。
+- **插件包**：Actions → 构建插件包 → 选系列。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟），也可勾选"立即组装固件"一步出固件。
 - **阶段 2**：Actions → 快速定制构建（ImageBuilder）→ 选基础系列/Release，改 `config/ib-packages.list` 即可换软件包组合。**日常使用的固件来自这里**（基础固件不含第三方插件）。
 
 | 文档 | 内容 |
@@ -80,10 +80,9 @@ h28k-openwrt/
 ├── README.md
 ├── documents/                       # 分册文档
 ├── config/
-│   ├── firmware.conf                # 初始化参数（已测试版本白名单、LAN IP、密码、根目录大小、主题、ABI 开关）
-│   ├── packages.conf                # 插件源码 git clone 列表（仅「构建插件包」工作流使用）
-│   ├── sdk-packages.list            # 需要 SDK 源码编译的第三方插件名（nikki、fluent）
-│   ├── ib-packages.list             # 阶段 2 快速定制构建的追加软件包列表
+│   ├── firmware.conf                # 初始化参数（版本白名单、LAN IP、密码、根目录大小、主题、ABI 开关）
+│   ├── source-plugins.list          # 源码插件清单（唯一插件入口，默认全注释保持纯净）
+│   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
 ├── patches/
 │   ├── 24.10/                       # 24.10 系补丁（7 个，含 RK3528 内核回移）
@@ -107,8 +106,8 @@ h28k-openwrt/
 
 ## 固件组件
 
-- **基础固件**（阶段 1 Release）：`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server` 等官方源组件，**不含第三方插件**
-- **定制固件**（阶段 2 产物，日常使用推荐）：基础固件 + `luci-app-nikki`、`luci-theme-fluent`（ipk 来自插件包 Release）+ `config/ib-packages.list` 所列包
+- **基础固件**（阶段 1 Release）与**默认定制固件**（阶段 2 产物）：均为纯净官方组件（`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server`），**不含第三方插件**
+- 需要第三方插件（nikki、fluent 主题等）：在 `config/source-plugins.list` 取消注释并重跑「构建插件包」，之后所有阶段 2 固件自动带上
 
 ## 设备信息
 

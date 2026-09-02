@@ -11,14 +11,26 @@ trim() {
   printf '%s' "$value"
 }
 
+# 判断版本是否在 supported_versions 白名单内。
+# 调用前必须已经执行过 load_firmware_config。
+version_in_list() {
+  local needle="$1" item
+  for item in "${supported_versions[@]}"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 load_firmware_config() {
   local file="$1" key value octet
   local -a octets
   [[ -f "$file" ]] || fail "config file not found: $file"
 
   default_series=""
+  supported_versions=()
   lan_ip=""
   password=""
+  rootfs_size=""
   default_theme=""
   check_official_abi=true
 
@@ -31,16 +43,36 @@ load_firmware_config() {
     fi
     case "$key" in
       default_series) default_series="$value" ;;
+      supported_versions) read -r -a supported_versions <<< "$value" ;;
       lan_ip) lan_ip="$value" ;;
       password) password="$value" ;;
+      rootfs_size) rootfs_size="$value" ;;
       default_theme) default_theme="$value" ;;
       check_official_abi) check_official_abi="$value" ;;
       *) fail "unknown config key: $key" ;;
     esac
   done < "$file"
 
-  [[ "$default_series" =~ ^(24\.10|25\.12)$ ]] ||
-    fail "default_series must be 24.10 or 25.12"
+  # 已测试版本白名单：ABI 与补丁仅对这些版本验证过，构建必须从中选择
+  (( ${#supported_versions[@]} >= 1 )) || fail "supported_versions must not be empty"
+  local v series_ok=false
+  for v in "${supported_versions[@]}"; do
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid supported version: $v"
+    [[ "$v" == "$default_series".* ]] && series_ok=true
+  done
+  [[ "$series_ok" == true ]] ||
+    fail "default_series $default_series has no version in supported_versions"
+
+  # 工作流输入覆盖（环境变量，留空 = 使用 conf 默认值）
+  lan_ip="${CFG_LAN_IP:-$lan_ip}"
+  password="${CFG_PASSWORD:-$password}"
+  rootfs_size="${CFG_ROOTFS_SIZE:-$rootfs_size}"
+
+  [[ -n "$rootfs_size" && "$rootfs_size" =~ ^[0-9]+$ ]] ||
+    fail "invalid rootfs_size: $rootfs_size"
+  (( 10#$rootfs_size >= 256 && 10#$rootfs_size <= 4096 )) ||
+    fail "rootfs_size must be 256..4096 MiB: $rootfs_size"
+
   [[ -n "$lan_ip" ]] || fail "lan_ip is required"
   [[ "$lan_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] ||
     fail "invalid lan_ip: $lan_ip"

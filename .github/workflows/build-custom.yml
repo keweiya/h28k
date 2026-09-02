@@ -27,6 +27,25 @@ on:
         type: boolean
         required: false
         default: false
+      lan_ip:
+        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值）'
+        type: string
+        required: false
+        default: ''
+      password:
+        description: 'root 密码（留空使用 config/firmware.conf 的默认值）'
+        type: string
+        required: false
+        default: ''
+      rootfs_size:
+        description: '固件根目录大小（MiB，可选 512M / 1G / 2G）'
+        type: choice
+        required: true
+        default: '2048'
+        options:
+          - '512'
+          - '1024'
+          - '2048'
 
 permissions:
   contents: write
@@ -71,6 +90,10 @@ jobs:
           ls -lh ib.tar.xz
 
       - name: 组装定制固件
+        env:
+          CFG_LAN_IP: ${{ inputs.lan_ip }}
+          CFG_PASSWORD: ${{ inputs.password }}
+          CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
         run: |
           mkdir out
           bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \

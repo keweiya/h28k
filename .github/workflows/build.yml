@@ -1,7 +1,9 @@
 name: 编译 HINLINK H28K 固件
 
-# 托管运行器入口：每周定时构建全部支持系列，也可手动触发。
-# 矩阵准备任务把手动参数解析成系列列表，再按系列并行调用可复用流水线。
+# 阶段 1：全量源码构建（官方源码 + H28K 补丁 + check-abi 门禁），
+# 产物 = sysupgrade 固件 + 自建 ImageBuilder，一起发布到 Release。
+# 每周定时构建；该版本已发过 Release 时自动跳过。
+# 版本只能选 config/firmware.conf supported_versions 中的已测试版本（ABI 保证的前提）。
 
 on:
   schedule:
@@ -9,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       series:
-        description: '要构建的 ImmortalWrt 系列'
+        description: '要构建的 ImmortalWrt 系列（all = 全部，各系列取已测试版本中最新的）'
         type: choice
         required: true
         default: all
@@ -18,7 +20,7 @@ on:
           - 24.10
           - 25.12
       exact_version:
-        description: '固定版本（可选，如 v24.10.6；填写后只构建该版本所属系列）'
+        description: '精确版本（可选，仅限已测试版本如 v24.10.6；填写后忽略系列选择）'
         type: string
         required: false
         default: ''
@@ -27,6 +29,25 @@ on:
         type: boolean
         required: false
         default: false
+      lan_ip:
+        description: 'LAN 管理地址（留空使用 config/firmware.conf 的默认值）'
+        type: string
+        required: false
+        default: ''
+      password:
+        description: 'root 密码（留空使用 config/firmware.conf 的默认值）'
+        type: string
+        required: false
+        default: ''
+      rootfs_size:
+        description: '固件根目录大小（MiB，可选 512M / 1G / 2G）'
+        type: choice
+        required: true
+        default: '2048'
+        options:
+          - '512'
+          - '1024'
+          - '2048'
 
 permissions:
   contents: write
@@ -49,6 +70,7 @@ jobs:
         id: resolve
         run: |
           bash "$GITHUB_WORKSPACE/scripts/resolve_series.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
             "${{ inputs.series || 'all' }}" \
             "${{ inputs.exact_version }}" \
             "$GITHUB_OUTPUT"
@@ -60,9 +82,228 @@ jobs:
       fail-fast: false
       matrix:
         series: ${{ fromJSON(needs.matrix.outputs.series) }}
-    uses: ./.github/workflows/build-firmware.yml
-    with:
-      series: ${{ matrix.series }}
-      exact_version: ${{ inputs.exact_version }}
-      force_build: ${{ inputs.force_build || false }}
-    secrets: inherit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘空间
+        run: |
+          echo "=== Before cleanup ==="
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/android 2>/dev/null || true
+          sudo rm -rf /opt/ghc 2>/dev/null || true
+          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
+          sudo rm -rf /usr/local/.ghcup 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
+          sudo rm -rf /usr/local/share/chromium 2>/dev/null || true
+          sudo rm -rf /usr/share/swift 2>/dev/null || true
+          sudo rm -rf /usr/local/.rustup 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h / | tail -1
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
+            genisoimage gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev lld llvm lrzsz msmtp ninja-build openssl p7zip-full \
+            patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip wget xmlto xxd zlib1g-dev zstd
+
+      - name: 选择 ImmortalWrt 版本
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/select_release.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_OUTPUT" \
+            "${{ matrix.series }}" \
+            "${{ inputs.exact_version }}"
+          # 已构建自动跳过：该版本已发过固件 Release 且未强制重建时直接结束，
+          # 避免定时构建重复编译同一版本。后续步骤均以 skip 输出为条件。
+          if [[ "${{ inputs.force_build }}" != "true" ]]; then
+            tag="$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")"
+            # 先完整捕获再匹配：grep -q 接大输出会在 pipefail 下触发 SIGPIPE
+            tags="$(gh api --paginate "repos/{owner}/{repo}/releases" --jq '.[].tag_name')"
+            if printf '%s\n' "$tags" | grep -q "^h28k-${tag}-"; then
+              echo "版本 ${tag} 已发布过固件，跳过本次构建（force_build 可强制重建）"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: 克隆正式版源码
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          git clone --branch "${{ steps.release.outputs.tag }}" --single-branch --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git source
+
+      - name: 恢复下载缓存
+        if: steps.release.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: source/dl
+          key: h28k-dl-${{ matrix.series }}-${{ steps.release.outputs.version }}
+          restore-keys: |
+            h28k-dl-${{ matrix.series }}-
+
+      - name: 应用 HINLINK H28K 补丁
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/apply_patches.sh" \
+            . "$GITHUB_WORKSPACE/patches/${{ matrix.series }}"
+
+      - name: 使用官方 feeds
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          curl -fsSL \
+            "https://downloads.immortalwrt.org/releases/${{ steps.release.outputs.version }}/targets/rockchip/armv8/feeds.buildinfo" \
+            -o feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 应用构建配置
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        env:
+          CFG_LAN_IP: ${{ inputs.lan_ip }}
+          CFG_PASSWORD: ${{ inputs.password }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/build_config.sh" prepare \
+            . \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/config/packages.conf" \
+            "$GITHUB_ENV"
+
+      - name: 准备内核配置
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        env:
+          CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/prepare_kernel_config.sh" \
+            . \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "${{ steps.release.outputs.version }}" \
+            "${{ steps.release.outputs.series }}" \
+            "$GITHUB_WORKSPACE/config/hinlink-h28k.config"
+
+      - name: 下载源码包
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        timeout-minutes: 90
+        run: |
+          make -j"$(nproc)" download V=s
+          find dl -size -1024c -print -delete
+          du -sh dl
+
+      - name: 编译固件
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        timeout-minutes: 300
+        run: |
+          make -j"$(nproc)" V=s 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "=== Build failed, disk space ==="
+            df -h /
+            tail -100 build.log
+            exit "$code"
+          fi
+
+      - name: 生成 ImageBuilder 工具包
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          make imagebuilder -j"$(nproc)"
+          ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
+
+      - name: 校验内核 ABI
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/build_config.sh" check-abi \
+            . \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "${{ steps.release.outputs.version }}" \
+            "${{ steps.release.outputs.tag }}" \
+            "${{ steps.release.outputs.kernel_kmods }}"
+
+      - name: 检查固件产物
+        if: steps.release.outputs.skip != 'true'
+        working-directory: source
+        run: |
+          shopt -s nullglob
+          FIRMWARE_FILES=(bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz)
+          if [ "${#FIRMWARE_FILES[@]}" -eq 0 ]; then
+            echo "HINLINK H28K sysupgrade firmware not found"
+            ls -lh bin/targets/rockchip/armv8/ 2>/dev/null || true
+            exit 1
+          fi
+          ls -lh "${FIRMWARE_FILES[@]}"
+          IB_FILE="$(find bin/targets/rockchip/armv8 -maxdepth 1 \
+            -name 'immortalwrt-imagebuilder-*.tar.xz' -print -quit)"
+          if [ -z "$IB_FILE" ]; then
+            echo "ImageBuilder tarball not found"
+            exit 1
+          fi
+          echo "IB_FILE=source/$IB_FILE" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(TZ=Asia/Hong_Kong date +'%Y%m%d')" >> "$GITHUB_ENV"
+          echo "UPSTREAM_HASH=$(git log -1 --format='%h')" >> "$GITHUB_ENV"
+
+      - name: 上传固件构件
+        if: steps.release.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HINLINK H28K 固件-${{ steps.release.outputs.tag }}
+          path: |
+            source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz
+            ${{ env.IB_FILE }}
+          retention-days: 30
+
+      - name: 发布固件 Release
+        if: steps.release.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: h28k-${{ steps.release.outputs.tag }}-${{ env.BUILD_DATE }}
+          name: "HINLINK H28K 固件 ${{ steps.release.outputs.tag }} (${{ env.BUILD_DATE }})"
+          body: |
+            ## HINLINK H28K 固件
+
+            - **编译日期**：${{ env.BUILD_DATE }}
+            - **上游版本**：${{ steps.release.outputs.tag }} (${{ env.UPSTREAM_HASH }})
+            - **ImmortalWrt 系列**：${{ matrix.series }}
+            - **设备型号**：HINLINK H28K (RK3528)
+            - **管理地址**：`${{ env.FIRMWARE_LAN_IP }}`
+            - **root 密码**：`${{ env.FIRMWARE_PASSWORD }}`
+
+            附件中的 `immortalwrt-imagebuilder-*.tar.xz` 为自建 ImageBuilder，可用于"快速定制构建"工作流，分钟级组装不同软件包组合的固件（内核与 ABI 完全一致）。
+          files: |
+            source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz
+            ${{ env.IB_FILE }}
+          # 25.12 为主力系列，其 Release 标记为仓库 latest
+          make_latest: ${{ matrix.series == '25.12' && 'true' || 'false' }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传失败编译日志
+        if: failure() && steps.release.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: 编译失败日志-${{ matrix.series }}
+          path: source/build.log
+          if-no-files-found: ignore
+          retention-days: 7

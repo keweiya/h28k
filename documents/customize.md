@@ -1,14 +1,18 @@
 # 定制说明
 
-## config/firmware.conf（全局参数）
+## config/firmware.conf（初始化参数 / 默认值）
 
 | 参数 | 说明 |
 | --- | --- |
-| `default_series` | 默认 ImmortalWrt 系列，只能填 `24.10` 或 `25.12`。Actions 手动触发时会显式选系列，此值只在本地调用脚本未传系列参数时作为回退 |
-| `lan_ip` | 固件 LAN 管理地址，编译时直接替换 `config_generate` 中的默认地址 |
-| `password` | root 密码明文，编译时以 SHA-512 哈希写入 `/etc/shadow` |
+| `supported_versions` | **已测试版本白名单**（空格分隔）：板级补丁与 ABI 校验只对这些版本验证过，构建只能从中选择，每系列自动取最新的一个。官方新版本实测通过后再加入 |
+| `default_series` | 回退系列（本地调用脚本未传系列参数时使用），白名单中必须有该系列的版本 |
+| `lan_ip` | LAN 管理地址默认值（`192.168.100.1`）；阶段 1 编译期注入，阶段 2 以首启 uci-defaults 注入 |
+| `password` | root 密码默认值（`password`），以 SHA-512 哈希写入 |
+| `rootfs_size` | 固件根目录大小默认值，MiB（可选 512 / 1024 / 2048，默认 2048） |
 | `default_theme` | LuCI 默认主题，填 `luci-static` 下的目录名（如 `fluent`），留空不修改 |
 | `check_official_abi` | `true` 时启用官方内核配置合成、官方 kmod 源和 ABI 强校验；**无特殊理由不要关闭**，关闭后固件将不再与官方源 ABI 一致 |
+
+工作流手动触发时可在输入框临时覆盖 `lan_ip` / `password` / `rootfs_size`，留空即使用这里的默认值；定时构建固定使用默认值。
 
 ## config/packages.conf（额外软件包）
 
@@ -40,7 +44,7 @@ openssh-sftp-server
 
 ## config/hinlink-h28k.config（设备选包种子）
 
-保存目标、软件包和分区配置（`CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y` 等）。构建时与官方 `config.buildinfo` 中的内核选项合成最终 `.config`。末尾的 `CONFIG_IB=y` 让阶段 1 构建完成后顺带产出自建 ImageBuilder——这是构建系统选项，不参与内核配置，不影响 ABI。
+保存目标与软件包选配（`CONFIG_TARGET_rockchip_armv8_DEVICE_hinlink_h28k=y` 等）。构建时与官方 `config.buildinfo` 中的内核选项合成最终 `.config`。末尾的 `CONFIG_IB=y` 让阶段 1 构建完成后顺带产出自建 ImageBuilder——这是构建系统选项，不参与内核配置，不影响 ABI。根目录大小（`CONFIG_TARGET_ROOTFS_PARTSIZE`）统一由 `firmware.conf` 的 `rootfs_size` 控制，不要写在这里。
 
 **选包规则（重要）**：
 
@@ -48,14 +52,15 @@ openssh-sftp-server
 - **kmod 包**只能选择官方软件源中已有的包：流水线启用了 `CONFIG_ALL_KMODS`，kmod 一律从官方 kmod 源安装；若选择官方源没有的 kmod，会触发源码编译并改变内核配置，**ABI 校验会直接失败**。这是门禁在保护你，不是 bug。
 - 修改后建议先手动触发一次单系列构建验证 ABI 门禁通过。
 
-## 新增 ImmortalWrt 系列（如未来的 26.x）
+## 新增版本 / 系列
+
+**新增已测试版本（同系列，如未来的 24.10.7）**：官方发布后先实测——补丁能否应用、ABI 能否对齐、功能是否正常——然后把版本号加入 `config/firmware.conf` 的 `supported_versions`。这是唯一需要改的地方：定时构建会自动取该系列最新的已测试版本，旧版本的重复构建会被"已构建自动跳过"拦住。
+
+**新增系列（如未来的 26.x）**：
 
 1. 新建 `patches/<系列>/`，放入该系列的板级补丁（文件名数字前缀决定应用顺序）。
-2. 在以下三处把新系列加入白名单：
-   - `scripts/resolve_series.sh` 的 `known_series`
-   - `scripts/select_release.sh` 的系列正则 `^(24\.10|25\.12)$` 与版本正则 `^(24\.10|25\.12)\.[0-9]+$`
-   - `scripts/config.sh` 的 `default_series` 校验
-3. `.github/workflows/build.yml` 与 `build-local.yml` 的 `series` 选项列表中加入新系列。
+2. `supported_versions` 加入该系列版本。
+3. `.github/workflows/build.yml` 的 `series` 选项和 `delete-older-releases.yml` 的版本正则中加入新系列。
 4. 若官方该系列内核缺少 H28K 支持（如 24.10 之于 RK3528），需要先补内核回移补丁；若官方已有 RK3528 支持则只需板级补丁。
 5. 手动触发构建验证 ABI 门禁，测试通过后更新 README 支持矩阵。
 

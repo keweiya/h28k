@@ -14,7 +14,7 @@
 | 25.12.x | `patches/25.12/` | 5 个 H28K 板级补丁 | 25.12.0, 25.12.1 |
 
 - 内核版本跟随官方 release（24.10 系为 6.6.x，25.12 系为 6.12.x，以官方实际发布为准）。
-- 每周自动构建两个系列的最新正式版；官方发布新点版本（如 24.10.7）后自动跟上。
+- **只构建已测试版本**（24.10.5 / 24.10.6 / 25.12.0 / 25.12.1，白名单见 `config/firmware.conf` 的 `supported_versions`）；官方新版本实测通过后再加入。
 - 补丁按文件名字典序应用（`git apply --3way`），文件名前缀数字即应用顺序。
 - 每次构建强制校验 ABI，见下文"ABI 保证机制"。
 
@@ -58,7 +58,7 @@
   → make image 组装 → 内核与阶段 1 完全一致，ABI 不变
 ```
 
-- **阶段 1**：Actions → 编译 HINLINK H28K 固件 → 选系列（`all` / `24.10` / `25.12`），可选填精确版本。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
+- **阶段 1**：Actions → 编译 HINLINK H28K 固件 → 选系列（`all` / `24.10` / `25.12`），可选填精确版本、LAN 地址、root 密码、根目录大小（512M/1G/2G）。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
 - **阶段 2**：Actions → 快速定制构建（ImageBuilder）→ 选基础系列/Release，改 `config/ib-packages.list` 即可换软件包组合。
 
 | 文档 | 内容 |
@@ -75,7 +75,7 @@ h28k-openwrt/
 ├── README.md
 ├── documents/                       # 分册文档
 ├── config/
-│   ├── firmware.conf                # 全局构建参数（默认系列、LAN IP、密码、主题、ABI 开关）
+│   ├── firmware.conf                # 初始化参数（已测试版本白名单、LAN IP、密码、根目录大小、主题、ABI 开关）
 │   ├── packages.conf                # 阶段 1 额外 git clone 软件包（nikki、fluent 主题）
 │   ├── ib-packages.list             # 阶段 2 快速定制构建的追加软件包列表
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
@@ -83,19 +83,17 @@ h28k-openwrt/
 │   ├── 24.10/                       # 24.10 系补丁（7 个，含 RK3528 内核回移）
 │   └── 25.12/                       # 25.12 系补丁（5 个板级补丁）
 ├── scripts/
-│   ├── config.sh                    # 共享配置读取与校验
+│   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
 │   ├── resolve_series.sh            # 手动参数 → 构建矩阵系列列表
-│   ├── select_release.sh            # 解析系列最新版/精确版 + 官方 kmods 哈希
+│   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希
 │   ├── select_ib.sh                 # 选最新带自建 ImageBuilder 附件的 Release
-│   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包）
+│   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小）
 │   ├── apply_patches.sh             # 按字典序应用系列补丁
-│   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 24.10 vermagic 排除
+│   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
 │   └── build_config.sh              # 参数注入、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
-    ├── build.yml                    # 阶段 1 托管入口（定时 + 手动，系列矩阵）
-    ├── build-local.yml              # 阶段 1 自托管入口（手动，系列矩阵）
-    ├── build-firmware.yml           # 阶段 1 可复用流水线（固件 + 自建 IB + ABI 门禁）
-    ├── build-custom.yml             # 阶段 2 快速定制构建（分钟级）
+    ├── build.yml                    # 阶段 1：全量源码构建（定时 + 手动，系列矩阵）
+    ├── build-custom.yml             # 阶段 2：快速定制构建（分钟级）
     └── delete-older-releases.yml    # 按系列保留最近 N 个 Release
 ```
 

@@ -44,10 +44,14 @@ if [[ "$check_official_abi" == true ]]; then
   grep -q '^CONFIG_ALL_KMODS=y$' .config.official
   grep -q '^CONFIG_DEVEL=y$' .config.official
   cat .config.official "$device_config" > .config
+  # 根目录大小来自 firmware.conf 的 rootfs_size（工作流输入可覆盖），
+  # 在设备种子之后追加，make defconfig 时以最后写入的值为准
+  printf 'CONFIG_TARGET_ROOTFS_PARTSIZE=%s\n' "$rootfs_size" >> .config
   [[ "$release_series" == 24.10 ]] &&
     exclude_rk3528_from_abi include/kernel-defaults.mk
 else
   cp "$device_config" .config
+  printf 'CONFIG_TARGET_ROOTFS_PARTSIZE=%s\n' "$rootfs_size" >> .config
 fi
 
 make defconfig

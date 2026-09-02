@@ -12,6 +12,10 @@
 
 这是设计决策，不是遗漏。这些功能依赖 amlogic-s9xxx-openwrt 的 armsr rootfs + remake 重打包机制，该机制会整体替换内核模块，导致与官方插件仓库的 ABI 不一致——与"官方插件可直接安装"这一硬性要求互斥。完整决策记录见 README"设计说明"一节。EMMC 安装请看 [install.md](install.md)。
 
+## 为什么只能构建固定几个版本？
+
+`config/firmware.conf` 的 `supported_versions` 是已测试版本白名单：板级补丁和官方 ABI 校验只对这些版本验证过。官方发布新版本后，需要先实测补丁能否应用、ABI 能否对齐，再把新版本加入白名单——这样任何构建产物的 ABI 都是可靠的。填入白名单之外的版本会被直接拒绝。
+
 ## 快速定制构建（阶段 2）的固件 ABI 一致吗？
 
 一致。阶段 2 不编译任何源码：ImageBuilder 里的内核和 kmod 就是阶段 1 全量构建通过 ABI 门禁的那一份，`make image` 只是把包组装进镜像。kmod 在组装时从官方软件源拉取（与官方 release 同一 URL），因此从定制固件上用官方源装插件与基础固件完全相同。
@@ -37,9 +41,3 @@
 ## 下载阶段很慢 / dl 缓存无效
 
 托管构建按系列缓存 `source/dl`。官方发新版后缓存 key 变化，首个构建会全量下载（约 90 分钟超时上限），之后恢复。手动触发时可先构建一次单系列预热缓存。
-
-## 自托管构建需要注意什么？
-
-- 运行器需满足标签 `[self-hosted, Linux, X64, h28k-builder]`，或在 `build-local.yml` 中修改 `runs_on`。
-- 自托管默认关闭磁盘清理（`cleanup_disk: false`），请确保构建盘有 30 GB 以上空闲。
-- 工作流会写入 Release，自托管 runner 的 token 需具备 contents:write 权限（仓库默认即可）。

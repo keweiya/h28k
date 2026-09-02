@@ -3,7 +3,7 @@
 ## 两段式构建
 
 ```
-阶段 1 · 全量源码构建（build.yml / build-local.yml / build-firmware.yml）
+阶段 1 · 全量源码构建（build.yml）
   官方源码 + H28K 补丁全量编译 → check-abi 门禁
   → Release：sysupgrade 固件 + 自建 ImageBuilder（immortalwrt-imagebuilder-*.tar.xz）
   耗时 1.5~3 小时；仅在官方发新版或手动触发时需要执行
@@ -20,14 +20,13 @@
 
 ## 工作流总览
 
-| 工作流 | 运行器 | 触发方式 | 作用 | 耗时（量级） |
-| --- | --- | --- | --- | --- |
-| 编译 HINLINK H28K 固件（build.yml） | GitHub 托管 `ubuntu-24.04` | 每周日定时 + 手动 | 阶段 1：解析系列矩阵，并行构建；同版本已发布则自动跳过 | 全新 1.5~3h，跳过时秒级 |
-| 自托管编译（build-local.yml） | 自托管 `h28k-builder` | 手动 | 同上，运行在自己的机器上 | 取决于机器 |
-| 快速定制构建（build-custom.yml） | GitHub 托管 | 手动 | 阶段 2：用自建 ImageBuilder 组装定制固件 | ~5 分钟 |
-| 清理历史 Release | GitHub 托管 | 每周日定时 + 手动 | 每系列保留最近 N 个 Release | 秒级 |
+| 工作流 | 触发方式 | 作用 | 耗时（量级） |
+| --- | --- | --- | --- |
+| 编译 HINLINK H28K 固件（build.yml） | 每周日定时 + 手动 | 阶段 1：全量源码构建，同版本已发布则自动跳过 | 全新 1.5~3h，跳过时秒级 |
+| 快速定制构建（build-custom.yml） | 手动 | 阶段 2：用自建 ImageBuilder 组装定制固件 | ~5 分钟 |
+| 清理历史 Release | 每周日定时 + 手动 | 每个系列与定制构建各保留最近 N 个 Release | 秒级 |
 
-`build-firmware.yml` 是阶段 1 的可复用单系列流水线，由前两个工作流调用，不直接触发。
+运行器统一使用 GitHub 托管 `ubuntu-24.04`。全量构建在公开仓库免费，私有仓库消耗 Actions 额度。
 
 ## 手动触发参数
 
@@ -36,9 +35,19 @@
 - `all`：两个系列同时构建（默认，定时构建固定为 all）。
 - `24.10` / `25.12`：只构建所选系列。
 
-**固定版本**（可选）：填写精确版本号，如 `v24.10.6` 或 `25.12.1`（`v` 前缀可省略）。填写后只构建该版本所属的系列；留空则自动选择该系列最新的、官方 kmods 仍然可用的正式版。
+**精确版本**（可选）：只能填 `config/firmware.conf` 中 `supported_versions` 白名单内的版本（如 `v24.10.6`、`25.12.1`）。**版本对应是固定的**——板级补丁与 ABI 校验只对这些版本验证过，填其他版本会直接报错拒绝构建；留空则每个系列自动取白名单中最新的版本。
 
-**强制重建**（force_build，可选）：阶段 1 在解析版本后会检查该版本是否已发过固件 Release，已发布则整个构建自动跳过——每周定时构建因此几乎零成本。官方发布新点版本后自动恢复真实构建。需要重新出包（比如改了 `firmware.conf` 或补丁）时勾选 force_build。
+**固件参数**（手动触发时可临时覆盖，留空 = 使用 `config/firmware.conf` 默认值）：
+
+| 输入 | 说明 | 默认 |
+| --- | --- | --- |
+| LAN 管理地址 | 有效的 IPv4 地址 | `192.168.100.1` |
+| root 密码 | 明文 | `password` |
+| 根目录大小 | 512M / 1G / 2G | 2G（2048 MiB） |
+
+定时构建没有输入，固定使用 `config/firmware.conf` 中的默认值。
+
+**强制重建**（force_build，可选）：阶段 1 在解析版本后会检查该版本是否已发过固件 Release，已发布则整个构建自动跳过——每周定时构建因此几乎零成本。需要重新出包（比如改了 `firmware.conf` 或补丁）时勾选 force_build。
 
 不填固定版本时，构建结果跟随官方 release。如果上游变动导致补丁不再适用，`git apply --3way` 会显式失败并留下 `.rej` 文件，构建红叉即回归信号。
 
@@ -46,12 +55,14 @@
 
 - **基础固件系列**：使用哪个系列的 ImageBuilder。
 - **基础 Release 标签**（可选）：留空自动选该系列最新的、附带 ImageBuilder 的 Release。
+- **LAN 地址 / root 密码 / 根目录大小**（可选）：留空使用 `config/firmware.conf` 默认值，也可触发时直接填写。
 - **发布为 Release**：默认关闭（只上传 Artifact，避免 Release 列表膨胀）；开启后以 `h28k-custom-<基础标签>-<时间>` 为标签发布。
 
-定制内容在仓库文件中修改，不在工作流参数里：
+定制内容也可以在仓库文件中预先改好：
 
 - 软件包：`config/ib-packages.list`（在设备默认包之上追加）。
-- LAN IP / root 密码 / 默认主题：复用 `config/firmware.conf`，以首启 `uci-defaults` 方式注入（与阶段 1 编译期注入效果相同）。
+- LAN IP / root 密码 / 默认主题：`config/firmware.conf`，以首启 `uci-defaults` 方式注入（与阶段 1 编译期注入效果相同）。
+- 根目录大小：通过 `ROOTFS_PARTSIZE` 传给 ImageBuilder；若所用 IB 版本不支持该覆盖，则以基础构建时的根目录大小为准。
 
 阶段 2 的软件包版本冻结在阶段 1 构建时刻（nikki、主题等自编译包在 IB 内）；要升级这些包，重跑一次阶段 1 即可。
 

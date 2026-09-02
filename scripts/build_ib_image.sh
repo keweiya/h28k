@@ -58,6 +58,7 @@ make image \
   PROFILE=hinlink_h28k \
   PACKAGES="$packages" \
   FILES="$ib_dir/files" \
+  ROOTFS_PARTSIZE="$rootfs_size" \
   BIN_DIR="$(cd "$out_dir" && pwd)"
 
 out_abs="$(cd "$out_dir" && pwd)"

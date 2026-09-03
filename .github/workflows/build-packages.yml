@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '目标 ImmortalWrt 版本（all = 全部已测试版本）'
+        description: '目标 ImmortalWrt 版本'
         type: choice
         required: true
         default: 25.12.1

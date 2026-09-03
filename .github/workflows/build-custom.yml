@@ -1,11 +1,4 @@
-name: H28K 固件快速组装（ImageBuilder 直接出固件，约 5 分钟）
-
-# 用基础 Release 附带的自建 ImageBuilder 分钟级组装定制固件。
-# 与「H28K 固件全量构建」的区别：本工作流不编译任何源码，用现成 ImageBuilder
-# 组装（内核与全量构建完全一致，ABI 不变）；日常出固件用这个。
-# 产物覆盖更新到该版本的 Release（tag = h28k-v<版本>），不会产生多余 Release。
-# 前提：对应版本已跑过「H28K 固件全量构建」；插件包由「H28K 插件包构建」提供。
-# 包列表与首启配置见 config/ib-packages.list 与 config/firmware.conf。
+name: H28K 固件快速组装（ImageBuilder 直接出固件）
 
 on:
   workflow_dispatch:
@@ -16,6 +9,7 @@ on:
         required: true
         default: 25.12.1
         options:
+          - all
           - 25.12.1
           - 25.12.0
           - 24.10.6
@@ -44,13 +38,36 @@ permissions:
   contents: write
 
 concurrency:
-  group: assemble-h28k-${{ inputs.version }}
+  group: assemble-h28k-custom-${{ inputs.version }}
   cancel-in-progress: true
 
 jobs:
-  assemble:
+  matrix:
+    name: 解析组装版本矩阵
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    outputs:
+      versions: ${{ steps.resolve.outputs.versions }}
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 解析版本列表
+        id: resolve
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "${{ inputs.version }}" \
+            "$GITHUB_OUTPUT"
+
+  assemble:
+    name: 组装 ${{ matrix.version }} 定制固件
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
 
     steps:
       - name: 检出支持仓库
@@ -62,7 +79,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
-            "${{ inputs.version }}" \
+            "${{ matrix.version }}" \
             "$GITHUB_OUTPUT"
 
       - name: 下载 ImageBuilder 与插件包
@@ -72,10 +89,8 @@ jobs:
             curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
             echo "PLUGINS_ARG=plugins.tar.gz" >> "$GITHUB_ENV"
           else
-            echo "该版本尚无插件包附件，组装不含源码插件的固件（在 config/source-plugins.list 启用插件后跑「H28K 插件包构建」）"
             echo "PLUGINS_ARG=" >> "$GITHUB_ENV"
           fi
-          ls -lh ib.tar.zst
 
       - name: 组装定制固件
         env:
@@ -83,7 +98,7 @@ jobs:
           CFG_PASSWORD: ${{ inputs.password }}
           CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
         run: |
-          mkdir out
+          mkdir -p out
           bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
             ib.tar.zst \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
@@ -91,9 +106,30 @@ jobs:
             "$GITHUB_WORKSPACE/out" \
             "$PLUGINS_ARG"
 
+      - name: 整理并重命名定制产物（剔除重复包，增加 custom 与版本号）
+        run: |
+          mkdir -p release_files
+          V="${{ matrix.version }}"
+
+          # 剔除无用的 targz-sysupgrade 重复包
+          rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
+
+          # 拷贝并规范化重命名（统一加 v）
+          for f in out/*ext4-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-ext4-sysupgrade.img.gz"
+          done
+          for f in out/*squashfs-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-squashfs-sysupgrade.img.gz"
+          done
+          for f in out/*rootfs.tar.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-rootfs.tar.gz"
+          done
+
+          echo "=== 定制待发布文件列表 ==="
+          ls -lh release_files/
+
       - name: 生成 Release 总结信息
         run: |
-          # 只统计官方插件源小节里 =y 的 luci-app-*（不含中文包/清单外/中文界面）
           plugins="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
             | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1 | paste -sd' ' -)"
           if [[ -n "$plugins" ]]; then
@@ -111,31 +147,48 @@ jobs:
       - name: 上传定制固件构件
         uses: actions/upload-artifact@v4
         with:
-          name: H28K 固件-v${{ inputs.version }}-${{ github.run_number }}
-          path: out/*sysupgrade*.img.gz
+          name: immortalwrt-${{ matrix.version }}-h28k-custom-${{ github.run_number }}
+          path: release_files/*
           retention-days: 30
 
-      - name: 发布 Release（覆盖更新）
+      - name: 发布 Release（唯一 Custom Release）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="h28k-v${{ inputs.version }}"
+          TAG="immortalwrt-h28k-custom-v${{ matrix.version }}"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
-          TITLE="H28K 固件 ${{ inputs.version }}"
-          NOTES="## H28K 固件 ${{ inputs.version }}（最新固件）
+          TITLE="ImmortalWrt H28K 定制固件 v${{ matrix.version }}"
+          NOTES="## ImmortalWrt H28K 定制固件 v${{ matrix.version }}
 
+          - **构建类型**：ImageBuilder 组装（开箱即用定制版）
           - **组装时间**：$BUILD_TIME
+          - **基于底包**：ImmortalWrt v${{ matrix.version }}
           - **设备型号**：HINLINK H28K (RK3528)
-          - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
-          - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
+          - **管理地址**：\`${{ inputs.lan_ip }}\`
+          - **默认密码**：\`${{ inputs.password }}\`
           - ${{ env.PLUGIN_NOTE }}
           - ${{ env.FAILED_NOTE }}
-          - **kmod 与官方源包**：组装时从官方软件源在线拉取，与官方 release 完全一致
+          - **包含附件**：
+            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-rootfs.tar.gz\`"
 
-          本附件为最新组装固件（覆盖基础固件）；ImageBuilder / rootfs.tar.gz 等附件由「H28K 固件全量构建」维护。"
+          shopt -s nullglob
+          FILES=(release_files/*)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "未找到发布文件"
+            exit 1
+          fi
+
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" out/*sysupgrade*.img.gz --clobber
+            gh release upload "$TAG" "${FILES[@]}" --clobber
             gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
           else
-            gh release create "$TAG" out/*sysupgrade*.img.gz --title "$TITLE" --notes "$NOTES"
+            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
+          fi
+
+          if [[ "${{ matrix.version }}" == "25.12.1" ]]; then
+            gh release edit "$TAG" --latest
+          else
+            gh release edit "$TAG" --latest=false
           fi

@@ -1,10 +1,5 @@
 name: H28K 固件全量构建（源码编译 → 固件 + 自建 ImageBuilder）
 
-# 从源码完整编译：官方源码 + H28K 补丁 + check-abi 门禁。
-# 产物发布到 Release（tag = h28k-v<版本>；重复构建会覆盖更新同一 Release）：
-#   基础固件（不含第三方插件）+ rootfs.tar.gz + 自建 ImageBuilder。
-# 日常出固件请用「H28K 固件快速组装」工作流（用本工作流产出的 ImageBuilder）。
-
 on:
   workflow_dispatch:
     inputs:
@@ -43,7 +38,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-h28k-${{ inputs.version }}
+  group: build-h28k-base-${{ inputs.version }}
   cancel-in-progress: true
 
 jobs:
@@ -65,7 +60,7 @@ jobs:
             "$GITHUB_OUTPUT"
 
   build:
-    name: 编译 ${{ matrix.version }} 固件
+    name: 编译 ${{ matrix.version }} 基础固件
     needs: matrix
     strategy:
       fail-fast: false
@@ -80,19 +75,10 @@ jobs:
 
       - name: 清理磁盘空间
         run: |
-          echo "=== Before cleanup ==="
-          df -h / | tail -1
-          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
-          sudo rm -rf /usr/local/lib/android 2>/dev/null || true
-          sudo rm -rf /opt/ghc 2>/dev/null || true
-          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
-          sudo rm -rf /usr/local/.ghcup 2>/dev/null || true
-          sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
-          sudo rm -rf /usr/local/share/chromium 2>/dev/null || true
-          sudo rm -rf /usr/share/swift 2>/dev/null || true
-          sudo rm -rf /usr/local/.rustup 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+            /usr/local/.ghcup /usr/local/share/powershell /usr/local/share/chromium \
+            /usr/share/swift /usr/local/.rustup 2>/dev/null || true
           sudo docker image prune -af 2>/dev/null || true
-          echo "=== After cleanup ==="
           df -h / | tail -1
 
       - name: 安装编译依赖
@@ -150,7 +136,6 @@ jobs:
         env:
           CFG_LAN_IP: ${{ inputs.lan_ip }}
           CFG_PASSWORD: ${{ inputs.password }}
-          # 基础固件不含第三方主题（nikki/fluent 由 SDK 工作流单独编译、阶段 2 注入）
           CFG_DEFAULT_THEME: ''
         run: |
           bash "$GITHUB_WORKSPACE/scripts/build_config.sh" prepare \
@@ -183,46 +168,29 @@ jobs:
         timeout-minutes: 300
         run: |
           set -o pipefail
-          # 全速并行编译：完整日志写入 build.log，控制台只实时刷出错误/失败行
           make -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed' || true
           code=${PIPESTATUS[0]}
-          if [ "$code" -eq 0 ]; then
-            echo "=== 全速编译成功 ==="
-            exit 0
-          fi
-          echo "=== 全速编译失败（exit $code），日志尾部 100 行 ==="
-          tail -n 100 build.log || true
-          echo "=== 转单核详细模式重编译（V=s，完整日志）==="
-          make -j1 V=s 2>&1 | tee build-single.log
-          code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            echo "=== 单核重编译仍失败 ==="
-            df -h /
-            tail -n 200 build-single.log || true
-            exit "$code"
+            echo "=== 全速编译失败，转单核详细重试 ==="
+            make -j1 V=s 2>&1 | tee build-single.log
+            code=${PIPESTATUS[0]}
+            if [ "$code" -ne 0 ]; then
+              tail -n 200 build-single.log || true
+              exit "$code"
+            fi
           fi
-          echo "=== 单核重编译成功（并行编译为偶发抖动） ==="
 
       - name: 生成 ImageBuilder 工具包
         working-directory: source
         run: |
-          df -h / | tail -1
           set -o pipefail
           make imagebuilder -j"$(nproc)" 2>&1 | tee build-ib.log | grep --line-buffered -iE 'error|failed' || true
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            echo "=== 并行打包失败（exit $code），转单核详细重试 ==="
-            df -h /
             make imagebuilder -j1 V=s 2>&1 | tee build-ib-single.log
             code=${PIPESTATUS[0]}
-            if [ "$code" -ne 0 ]; then
-              echo "=== ImageBuilder 打包仍失败 ==="
-              tail -n 200 build-ib-single.log || true
-              exit "$code"
-            fi
-            echo "=== 单核重打包成功 ==="
+            [ "$code" -eq 0 ] \vert{}\vert{} exit "$code"
           fi
-          ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
       - name: 校验内核 ABI
         working-directory: source
@@ -234,65 +202,77 @@ jobs:
             "${{ steps.release.outputs.tag }}" \
             "${{ steps.release.outputs.kernel_kmods }}"
 
-      - name: 检查固件产物
-        working-directory: source
+      - name: 收集与重命名产物（剔除重复包，增加 base 与版本号）
+        id: pack
         run: |
-          shopt -s nullglob
-          FIRMWARE_FILES=(bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz)
-          if [ "${#FIRMWARE_FILES[@]}" -eq 0 ]; then
-            echo "HINLINK H28K sysupgrade firmware not found"
-            ls -lh bin/targets/rockchip/armv8/ 2>/dev/null || true
-            exit 1
-          fi
-          ls -lh "${FIRMWARE_FILES[@]}"
-          IB_FILE="$(find bin/targets/rockchip/armv8 -maxdepth 1 \
-            -name 'immortalwrt-imagebuilder-*' -print -quit)"
-          if [ -z "$IB_FILE" ]; then
-            echo "ImageBuilder tarball not found"
-            exit 1
-          fi
-          echo "IB_FILE=source/$IB_FILE" >> "$GITHUB_ENV"
-          echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
-          echo "UPSTREAM_HASH=$(git log -1 --format='%h')" >> "$GITHUB_ENV"
+          mkdir -p release_files
+          V="${{ steps.release.outputs.version }}"
+          TARGET_DIR="source/bin/targets/rockchip/armv8"
 
-      - name: 上传固件构件
+          # 剔除无用的 targz-sysupgrade 重复包
+          rm -f $TARGET_DIR/*targz-sysupgrade.img.gz 2>/dev/null || true
+
+          # 规范化重命名拷贝
+          for f in $TARGET_DIR/*hinlink_h28k*ext4-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-base-ext4-sysupgrade.img.gz"
+          done
+          for f in $TARGET_DIR/*hinlink_h28k*squashfs-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-base-squashfs-sysupgrade.img.gz"
+          done
+          for f in $TARGET_DIR/*rootfs.tar.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-base-rootfs.tar.gz"
+          done
+          for f in $TARGET_DIR/immortalwrt-imagebuilder-*; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
+          done
+
+          echo "=== 整理后待发布文件 ==="
+          ls -lh release_files/
+          echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'\%Y-\%m-\%d \%H:\%M')" >> "$GITHUB_ENV"
+
+      - name: 上传基础固件构件
         uses: actions/upload-artifact@v4
         with:
-          name: H28K 基础固件-${{ steps.release.outputs.tag }}
-          path: |
-            source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz
-            source/bin/targets/rockchip/armv8/*rootfs.tar.gz
-            ${{ env.IB_FILE }}
+          name: immortalwrt-${{ matrix.version }}-h28k-base-${{ github.run_number }}
+          path: release_files/*
           retention-days: 30
 
-      - name: 发布 Release（覆盖更新）
+      - name: 发布 Release（唯一 Base Release）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="h28k-v${{ steps.release.outputs.version }}"
-          shopt -s nullglob
-          FILES=(source/bin/targets/rockchip/armv8/*hinlink_h28k*sysupgrade.img.gz \
-                 source/bin/targets/rockchip/armv8/*rootfs.tar.gz \
-                 "${{ env.IB_FILE }}")
-          TITLE="H28K 固件 ${{ steps.release.outputs.tag }}"
-          NOTES="## H28K 固件 ${{ steps.release.outputs.tag }}（基础固件）
+          TAG="immortalwrt-h28k-base-v${{ steps.release.outputs.version }}"
+          TITLE="ImmortalWrt H28K 基础固件 v${{ steps.release.outputs.version }}"
+          NOTES="## ImmortalWrt H28K 基础固件 v${{ steps.release.outputs.version }}
 
+          - **构建类型**：源码完整编译（纯净基础版）
           - **构建时间**：${{ env.BUILD_TIME }}
-          - **上游版本**：${{ steps.release.outputs.tag }} (${{ env.UPSTREAM_HASH }})
+          - **上游版本**：${{ steps.release.outputs.tag }}
           - **设备型号**：HINLINK H28K (RK3528)
-          - **管理地址**：\`${{ env.FIRMWARE_LAN_IP }}\`
-          - **root 密码**：\`${{ env.FIRMWARE_PASSWORD }}\`
-          - **附件内容**：基础固件（squashfs/ext4，不含第三方插件）+ rootfs.tar.gz（LXC 用）+ 自建 ImageBuilder
+          - **管理地址**：\`${{ inputs.lan_ip }}\`
+          - **默认密码**：\`${{ inputs.password }}\`
+          - **包含附件**：
+            - \`immortalwrt-v${{ steps.release.outputs.version }}-h28k-base-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-v${{ steps.release.outputs.version }}-h28k-base-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-v${{ steps.release.outputs.version }}-h28k-base-rootfs.tar.gz\` (LXC 容器用)
+            - \`immortalwrt-v${{ steps.release.outputs.version }}-h28k-base-imagebuilder-rockchip-armv8.tar.zst\` (内核 ABI 一致的自建 ImageBuilder)
 
-          重复构建本版本会覆盖更新本 Release。日常使用的固件请用「H28K 固件快速组装」工作流产出。"
+          *日常使用建议下载带有 \`-custom\` 标识的定制固件。*"
+
+          shopt -s nullglob
+          FILES=(release_files/*)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "未找到发布文件"
+            exit 1
+          fi
+
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "${FILES[@]}" --clobber
             gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
           else
             gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
           fi
-          # 25.12 为主力系列，其 Release 标记为仓库 latest
-          # 仅主力版本 25.12.1 标记为仓库 latest
+
           if [[ "${{ matrix.version }}" == "25.12.1" ]]; then
             gh release edit "$TAG" --latest
           else
@@ -303,8 +283,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: 编译失败日志-${{ matrix.version }}
-          path: |
-            source/build*.log
+          name: 基础编译失败日志-${{ matrix.version }}
+          path: source/build*.log
           if-no-files-found: ignore
           retention-days: 7

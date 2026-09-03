@@ -9,11 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '要构建的 ImmortalWrt 版本'
+        description: '要构建的 ImmortalWrt 版本（all = 全部已测试版本）'
         type: choice
         required: true
         default: 25.12.1
         options:
+          - all
           - 25.12.1
           - 25.12.0
           - 24.10.6
@@ -46,8 +47,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  matrix:
+    name: 解析构建矩阵
+    runs-on: ubuntu-24.04
+    outputs:
+      versions: ${{ steps.resolve.outputs.versions }}
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 解析版本列表
+        id: resolve
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "${{ inputs.version }}" \
+            "$GITHUB_OUTPUT"
+
   build:
-    name: 编译 ${{ inputs.version }} 固件
+    name: 编译 ${{ matrix.version }} 固件
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -92,7 +115,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/select_release.sh" \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_OUTPUT" \
-            "${{ inputs.version }}"
+            "${{ matrix.version }}"
 
       - name: 克隆正式版源码
         run: |
@@ -183,7 +206,22 @@ jobs:
       - name: 生成 ImageBuilder 工具包
         working-directory: source
         run: |
-          make imagebuilder -j"$(nproc)"
+          df -h / | tail -1
+          set -o pipefail
+          make imagebuilder -j"$(nproc)" 2>&1 | tee build-ib.log | grep --line-buffered -iE 'error|failed' || true
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "=== 并行打包失败（exit $code），转单核详细重试 ==="
+            df -h /
+            make imagebuilder -j1 V=s 2>&1 | tee build-ib-single.log
+            code=${PIPESTATUS[0]}
+            if [ "$code" -ne 0 ]; then
+              echo "=== ImageBuilder 打包仍失败 ==="
+              tail -n 200 build-ib-single.log || true
+              exit "$code"
+            fi
+            echo "=== 单核重打包成功 ==="
+          fi
           ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
       - name: 校验内核 ABI
@@ -254,7 +292,8 @@ jobs:
             gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
           fi
           # 25.12 为主力系列，其 Release 标记为仓库 latest
-          if [[ "${{ steps.release.outputs.series }}" == "25.12" ]]; then
+          # 仅主力版本 25.12.1 标记为仓库 latest
+          if [[ "${{ matrix.version }}" == "25.12.1" ]]; then
             gh release edit "$TAG" --latest
           else
             gh release edit "$TAG" --latest=false
@@ -264,9 +303,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: 编译失败日志-${{ inputs.version }}
+          name: 编译失败日志-${{ matrix.version }}
           path: |
-            source/build.log
-            source/build-single.log
+            source/build*.log
           if-no-files-found: ignore
           retention-days: 7

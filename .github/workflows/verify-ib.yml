@@ -124,10 +124,15 @@ jobs:
           mkdir -p out-a
           set +e
           bash scripts/build_ib_image.sh ib.tar.zst config/firmware.conf verify-list.conf "$(pwd)/out-a" \
-            "$VER" > verify-a.log 2>&1
+            "" "$VER" > verify-a.log 2>&1
           rc=$?
           set -e
           echo "build_ib_image.sh 退出码：$rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "=== verify-a.log 尾部 ==="
+            tail -n 30 verify-a.log
+            exit "$rc"
+          fi
           echo "=== repositories 兜底 ==="
           grep -m1 '已按官方模板生成' verify-a.log || echo "（未触发兜底：IB 已自带 repositories）"
           if grep -q 'failed to read repositories' verify-a.log; then

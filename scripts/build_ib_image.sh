@@ -91,6 +91,51 @@ if [[ -n "$plugins_tarball" && -f "$plugins_dir/packages.list" ]]; then
 fi
 # 去重
 packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
+
+# 预检：用 IB 自带 apk 对每个待装包做模拟解析（不下载不安装），官方源与
+# 本地捆绑都没有的包提前剔除，避免整批安装失败触发逐包降级拖慢组装。
+# 先全量模拟一次（最快），失败时再逐包定位。仅支持 apk 系（25.12），
+# opkg 系（24.10）无 apk 工具，不做预检（由逐包降级兜底）。
+if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
+  ARCH_PACKAGES="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
+  APK_BIN="$PWD/staging_dir/host/bin/apk"
+  PRE_ROOT="$(mktemp -d)"
+  PRE_CACHE="$(mktemp -d)"
+  # 生成本地捆绑包索引（与 make image 内部同款 mkndx 命令），使本地包也参与解析
+  ( cd packages && "$APK_BIN" mkndx --allow-untrusted --output packages.adb ./*.apk ) >/dev/null 2>&1 || true
+  apk_simulate() {
+    "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
+      --repositories-file repositories \
+      --repository "$PWD/packages/packages.adb" \
+      --allow-untrusted --cache-dir "$PRE_CACHE" \
+      add --simulate "$@" >/dev/null 2>&1
+  }
+  missing_file="$out_dir/missing-packages.txt"
+  : > "$missing_file"
+  keep=''
+  if apk_simulate $packages; then
+    keep="$packages"
+  else
+    for p in $packages; do
+      case "$p" in
+        -*) keep="$keep $p"; continue ;;   # 负包名（移除默认包）交给 make image 处理
+      esac
+      if apk_simulate "$p"; then
+        keep="$keep $p"
+      else
+        printf '%s\n' "$p" >> "$missing_file"
+      fi
+    done
+  fi
+  rm -rf "$PRE_ROOT" "$PRE_CACHE"
+  packages="${keep# }"
+  n_missing="$(grep -c . "$missing_file" || true)"
+  if [ "${n_missing:-0}" -gt 0 ]; then
+    echo "=== 预检：以下 $n_missing 个包官方源与本地捆绑均没有，已提前跳过 ==="
+    cat "$missing_file"
+  fi
+fi
+
 echo "=== 组装镜像（PROFILE=hinlink_h28k） ==="
 echo "    额外软件包: ${packages:-（无）}"
 

@@ -134,18 +134,22 @@ jobs:
           # 只统计官方插件源小节里 =y 的 luci-app-*（不含中文包/清单外/中文界面）
           enabled="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
             | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1)"
-          # 安装失败清单（build_ib_image.sh 逐包降级后写入；不存在则视为全部成功）
+          # 预检剔除（官方源未收录）与安装失败（逐包降级）两个清单；不存在则视为空
+          cp out/missing-packages.txt missing.txt 2>/dev/null || touch missing.txt
           cp out/failed-packages.txt failed.txt 2>/dev/null || touch failed.txt
-          # 安装失败的 app 不计入"已启用"
+          # 已启用列表 = =y 的 app，剔除预检跳过与安装失败的
           plugins=''
           for p in $enabled; do
-            grep -qxF "$p" failed.txt || plugins="$plugins $p"
+            grep -qxF "$p" missing.txt && continue
+            grep -qxF "$p" failed.txt && continue
+            plugins="$plugins $p"
           done
           plugins="${plugins# }"
+          # 为空时整个"已启用插件"行不输出（对应 bullet 由 PLUGIN_LINE 空值省略）
           if [[ -n "$plugins" ]]; then
-            echo "PLUGIN_NOTE=**已启用插件**：$plugins" >> "$GITHUB_ENV"
+            echo "PLUGIN_LINE=- **已启用插件**：$plugins" >> "$GITHUB_ENV"
           else
-            echo "PLUGIN_NOTE=已启用插件：无（纯净官方组件 + 中文界面）" >> "$GITHUB_ENV"
+            echo "PLUGIN_LINE=" >> "$GITHUB_ENV"
           fi
           # 失败清单：app 失败时其配对中文包合并为同一条（app 都没装上，中文包无需单列）
           failed_note=''
@@ -160,9 +164,26 @@ jobs:
           done < failed.txt
           failed_note="${failed_note# }"
           if [[ -n "$failed_note" ]]; then
-            echo "FAILED_NOTE=**⚠ 以下插件安装失败，已自动跳过**：$failed_note" >> "$GITHUB_ENV"
+            echo "FAILED_LINE=- **⚠ 以下插件安装失败，已自动跳过**：$failed_note" >> "$GITHUB_ENV"
           else
-            echo "FAILED_NOTE=全部插件安装成功" >> "$GITHUB_ENV"
+            echo "FAILED_LINE=" >> "$GITHUB_ENV"
+          fi
+          # 预检跳过清单（官方源未收录）
+          missing_note=''
+          while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            missing_note="$missing_note \`$p\`"
+          done < missing.txt
+          missing_note="${missing_note# }"
+          if [[ -n "$missing_note" ]]; then
+            echo "MISSING_LINE=- **⚠ 以下包官方源未收录，已自动跳过**：$missing_note" >> "$GITHUB_ENV"
+          else
+            echo "MISSING_LINE=" >> "$GITHUB_ENV"
+          fi
+          if [[ -z "$failed_note" && -z "$missing_note" ]]; then
+            echo "OK_LINE=- ✅ 全部插件安装成功" >> "$GITHUB_ENV"
+          else
+            echo "OK_LINE=" >> "$GITHUB_ENV"
           fi
 
       - name: 上传定制固件构件
@@ -187,8 +208,10 @@ jobs:
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           - **默认密码**：\`${{ inputs.password }}\`
-          - ${{ env.PLUGIN_NOTE }}
-          - ${{ env.FAILED_NOTE }}
+          ${{ env.PLUGIN_LINE }}
+          ${{ env.OK_LINE }}
+          ${{ env.MISSING_LINE }}
+          ${{ env.FAILED_LINE }}
           - **包含附件**：
             - \`immortalwrt-v${{ matrix.version }}-h28k-custom-ext4-sysupgrade.img.gz\`
             - \`immortalwrt-v${{ matrix.version }}-h28k-custom-squashfs-sysupgrade.img.gz\`

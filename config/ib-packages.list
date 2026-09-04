@@ -110,7 +110,8 @@ luci-i18n-adblock-fast-zh-cn=n
 luci-app-adblock=n
 luci-i18n-adblock-zh-cn=n
 luci-app-adguardhome=y
-# 官方 25.12.1 源未收录该翻译包（两次组装实测均无法安装），界面暂为英文
+# 官方源未收录该插件的中文翻译包（仅有 lo 老挝语包 luci-i18n-adguardhome-lo），
+# 且 24.10 源没有 adguardhome（仅 25.12 有）；两次组装实测均无法安装，界面暂为英文
 luci-i18n-adguardhome-zh-cn=n
 luci-app-appfilter=n
 luci-i18n-appfilter-zh-cn=n

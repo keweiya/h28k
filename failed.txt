@@ -1,0 +1,5 @@
+luci-app-openclash
+luci-app-dockerman
+luci-app-ttyd
+luci-app-diskman
+luci-app-adguardhome

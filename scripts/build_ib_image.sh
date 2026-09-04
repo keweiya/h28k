@@ -133,12 +133,13 @@ if [ -f repositories ] || [ -f repositories.conf ]; then
       esac
       n_enabled=$((n_enabled + 1))
       # apk 文件名连字符分隔、opkg 的 ipk 下划线分隔，两种都要匹配；
-      # 版本段以数字开头（26.236… / 6.6.133~…），据此区分同名前缀的其他包
-      if grep -qE "^$p[-_][0-9]" "$official_files" 2>/dev/null ||
-         compgen -G "packages/$p-*.apk" >/dev/null ||
-         compgen -G "packages/$p-*.ipk" >/dev/null ||
-         compgen -G "packages/$p_*.apk" >/dev/null ||
-         compgen -G "packages/$p_*.ipk" >/dev/null; then
+      # 版本段以数字开头（26.236… / 6.6.133~…），据此区分同名前缀的其他包。
+      # 注意 ${p} 必须加花括号：$p_ 会被 bash 解析成名为 p_ 的变量（set -u 直接中止）
+      if grep -qE "^${p}[-_][0-9]" "$official_files" 2>/dev/null ||
+         compgen -G "packages/${p}-*.apk" >/dev/null ||
+         compgen -G "packages/${p}-*.ipk" >/dev/null ||
+         compgen -G "packages/${p}_*.apk" >/dev/null ||
+         compgen -G "packages/${p}_*.ipk" >/dev/null; then
         keep="$keep $p"
       else
         printf '%s\n' "$p" >> "$missing_file"

@@ -92,23 +92,28 @@ fi
 # 去重
 packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 
-# 预检：官方在线源没有、本地捆绑也没有的包提前剔除，避免整批安装失败
-# 触发逐包降级拖慢组装。apk 系（25.12）用 IB 自带 apk 对在线源做模拟解析
-#（不下载不安装、不生成本地索引——mkndx 生成的索引缺签名元数据会导致
-# make image 解析失败），本地捆绑按文件名 glob 判断；opkg 系（24.10）无
-# apk 工具，不做预检（由逐包降级兜底）。
-if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
-  ARCH_PACKAGES="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
-  APK_BIN="$PWD/staging_dir/host/bin/apk"
-  PRE_ROOT="$(mktemp -d)"
-  # 空 root 必须先 initdb（与 IB Makefile 的做法一致），否则模拟解析直接报错
-  "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" --allow-untrusted \
-    add --initdb >/dev/null 2>&1 || true
-  apk_check_online() {
-    "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
-      --repositories-file repositories --allow-untrusted \
-      add --simulate "$1" >/dev/null 2>&1
-  }
+# 预检：仅对 luci-* 包做"是否在官方源"检查（kmod/base 等本地捆绑必有，不检查）。
+# 官方包列表 = 各 feed 目录页里列出的 .apk/.ipk 文件名（apk 系取 repositories
+# 里的 URL 去掉 packages.adb 后缀；opkg 系取 repositories.conf 的 src/gz URL），
+# 纯 curl+grep，确定性判断，不依赖 apk 模拟行为；本地捆绑（packages/ 下的
+# 文件名前缀）作为兜底。不在官方源也不在本地捆绑的包提前剔除并写入
+# out/missing-packages.txt；全部被剔除时视为预检异常，放弃预检按原清单继续。
+if [ -f repositories ] || [ -f repositories.conf ]; then
+  official_files="$out_dir/official-feed-files.txt"
+  : > "$official_files"
+  if [ -f repositories ]; then
+    # apk 系：repositories 每行一个 .../packages.adb，feed 目录为其所在目录
+    sed -n 's#/packages.adb$##p' repositories | while IFS= read -r url; do
+      curl -fsSL --retry 2 "$url/" 2>/dev/null |
+        grep -oE 'href="[^"]+\.(apk|ipk)"' | sed -e 's/^href="//' -e 's/"$//' || true
+    done >> "$official_files"
+  else
+    # opkg 系：repositories.conf 的 src/gz <名> <URL>
+    sed -nE 's#^src/gz [^ ]+ (https?://[^ ]+)#\1#p' repositories.conf | while IFS= read -r url; do
+      curl -fsSL --retry 2 "$url/" 2>/dev/null |
+        grep -oE 'href="[^"]+\.(apk|ipk)"' | sed -e 's/^href="//' -e 's/"$//' || true
+    done >> "$official_files"
+  fi
   missing_file="$out_dir/missing-packages.txt"
   : > "$missing_file"
   keep=''
@@ -117,34 +122,30 @@ if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
   for p in $packages; do
     case "$p" in
       -*) keep="$keep $p"; continue ;;   # 负包名（移除默认包）交给 make image 处理
+      luci-*) ;;                          # 仅 luci- 包参与官方源比对
+      *) keep="$keep $p"; continue ;;
     esac
     n_enabled=$((n_enabled + 1))
-    if apk_check_online "$p" || compgen -G "packages/$p-*.apk" >/dev/null; then
+    if grep -qE "^$p-[0-9]" "$official_files" 2>/dev/null ||
+       compgen -G "packages/$p-*.apk" >/dev/null ||
+       compgen -G "packages/$p-*.ipk" >/dev/null; then
       keep="$keep $p"
     else
-      if [ "$n_missing" -eq 0 ]; then
-        # 首个被剔除的包打印模拟输出，便于诊断预检误判
-        echo "---- 预检剔除 $p 的 apk 模拟输出 ----"
-        "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
-          --repositories-file repositories --allow-untrusted \
-          add --simulate "$p" 2>&1 | head -6 || true
-        echo "------------------------------------"
-      fi
       printf '%s\n' "$p" >> "$missing_file"
       n_missing=$((n_missing + 1))
     fi
   done
-  # 保险：正包名被全部剔除说明 apk 模拟本身不可用，放弃预检结果按原清单继续
+  # 保险：luci 包被全部剔除说明官方源列表拉取失败，放弃预检按原清单继续
   n_kept=0
   for p in $keep; do
     case "$p" in -*) ;; *) n_kept=$((n_kept + 1)) ;; esac
   done
   if [ "$n_enabled" -gt 0 ] && [ "$n_kept" -eq 0 ]; then
-    echo "⚠️ 预检异常（所有包都被剔除），放弃预检结果，按原清单继续组装"
+    echo "⚠️ 预检异常（官方源列表拉取失败或全部被剔除），放弃预检结果，按原清单继续组装"
     keep="$packages"
     : > "$missing_file"
   fi
-  rm -rf "$PRE_ROOT"
+  rm -f "$official_files"
   packages="${keep# }"
   if [ "$n_missing" -gt 0 ]; then
     echo "=== 预检：以下 $n_missing 个包官方源与本地捆绑均没有，已提前跳过 ==="

@@ -151,15 +151,11 @@ jobs:
           else
             echo "PLUGIN_LINE=" >> "$GITHUB_ENV"
           fi
-          # 失败清单：app 失败时其配对中文包合并为同一条（app 都没装上，中文包无需单列）
+          # 失败清单：中文包一律并入其 app 显示（成功或失败都只显示 app 一条）
           failed_note=''
           while IFS= read -r p; do
             [[ -n "$p" ]] || continue
-            case "$p" in
-              luci-i18n-*-zh-cn)
-                app="luci-app-$(printf '%s' "$p" | sed -E 's/^luci-i18n-//; s/-zh-cn$//')"
-                grep -qxF "$app" failed.txt && continue ;;
-            esac
+            case "$p" in luci-i18n-*) continue ;; esac
             failed_note="$failed_note $p"
           done < failed.txt
           failed_note="${failed_note# }"
@@ -169,10 +165,12 @@ jobs:
             echo "FAILED_LINE=" >> "$GITHUB_ENV"
           fi
           # 预检跳过清单（官方源未收录）；注意 NOTES 是双引号字符串，
-          # 这里不能带反引号，否则会被 bash 当成命令替换执行
+          # 这里不能带反引号，否则会被 bash 当成命令替换执行。
+          # 中文包同样并入其 app，不单列
           missing_note=''
           while IFS= read -r p; do
             [[ -n "$p" ]] || continue
+            case "$p" in luci-i18n-*) continue ;; esac
             missing_note="$missing_note $p"
           done < missing.txt
           missing_note="${missing_note# }"

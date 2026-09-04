@@ -20,7 +20,7 @@
   - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
   - `X.Y-SNAPSHOT`（如 `25.12-SNAPSHOT`）：`openwrt-X.Y` 分支的滚动快照，官方源 `releases/X.Y-SNAPSHOT/`，源码锁 `version.buildinfo` 里的 revision。
   - `master`：master 分支滚动快照，官方源 `snapshots/`，源码锁当前已发布快照对应的 revision。
-- 滚动快照的源码 revision 与官方 kmods 目录由 `scripts/select_release.sh` 自动解析（`profiles.json` 的 `linux_kernel` 精确定位内核 ABI）；从解析到编译完成之间若官方快照更新，ABI 校验会失败——**重跑工作流即可**。
+- **滚动快照不做 ABI 强校验**：官方快照产物随时被新构建覆盖，无法作为固定契约。构建改为源码锁 revision + 全量 kmod 本地捆绑（固件自包含），与官方源的 kmod 兼容是尽力而为；正式版 `X.Y.Z` 的 ABI 强校验照常生效。
 - 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0050` 补丁的前提）。
 - 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
 - 内核版本跟随官方对应版本（24.10 系为 6.6.x，25.12 系为 6.12.x，master 当前为 6.18.x，以官方实际发布为准）。
@@ -28,6 +28,8 @@
 - 每次构建强制校验 ABI，见下文"ABI 保证机制"。
 
 ## ABI 保证机制
+
+（仅对 `X.Y.Z` 正式版生效；`master` / `X.Y-SNAPSHOT` 滚动快照不做 ABI 校验，见"支持版本"说明。）
 
 1. 源码锁定官方版本：正式版锁 release tag；滚动快照锁官方已发布产物对应的 revision（`scripts/select_release.sh` 自动解析，并确认官方 kmods 目录存在）。
 2. feeds 用官方 `feeds.buildinfo` 锁定提交；内核配置用官方 `config.buildinfo` 中的内核选项合成（`scripts/prepare_kernel_config.sh`）。

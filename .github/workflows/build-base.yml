@@ -242,7 +242,7 @@ jobs:
           rm -rf "$IB_STAGE"
           ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
-      - name: 校验内核 ABI
+      - name: 校验内核 ABI（滚动快照自动跳过）
         working-directory: source
         run: |
           bash "$GITHUB_WORKSPACE/scripts/build_config.sh" check-abi \

@@ -55,6 +55,13 @@ check_abi() {
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
   [[ "$check_official_abi" == true ]] || { echo "Official ABI check skipped"; return; }
+  # 滚动快照（master / X.Y-SNAPSHOT）：官方产物随时被新构建覆盖，ABI 强校验
+  # 不适用（轮换会误报失败）。构建改为源码锁 revision + 全量 kmod 本地捆绑，
+  # 固件自包含；与官方源的 kmod 兼容是尽力而为，不做硬性门禁
+  if [[ "$(version_kind "$version")" == "snapshot" ]]; then
+    echo "Rolling snapshot $version: official ABI check skipped（官方产物随时轮换，kmod 以本地捆绑为准）"
+    return
+  fi
   [[ "$kernel_kmods" =~ -[0-9a-f]{32}$ ]] || fail "invalid kmods directory: $kernel_kmods"
 
   built_abi="$(read_built_abi "$source_dir")"
@@ -63,7 +70,6 @@ check_abi() {
   echo "official_abi=$official_abi"
   if [[ "$built_abi" != "$official_abi" ]]; then
     echo "kernel ABI does not match official $version" >&2
-    echo "hint: 若目标是滚动快照（master / X.Y-SNAPSHOT），官方快照可能已在构建期间更新，重跑工作流即可" >&2
     exit 1
   fi
 }

@@ -168,11 +168,12 @@ jobs:
           else
             echo "FAILED_LINE=" >> "$GITHUB_ENV"
           fi
-          # 预检跳过清单（官方源未收录）
+          # 预检跳过清单（官方源未收录）；注意 NOTES 是双引号字符串，
+          # 这里不能带反引号，否则会被 bash 当成命令替换执行
           missing_note=''
           while IFS= read -r p; do
             [[ -n "$p" ]] || continue
-            missing_note="$missing_note \`$p\`"
+            missing_note="$missing_note $p"
           done < missing.txt
           missing_note="${missing_note# }"
           if [[ -n "$missing_note" ]]; then

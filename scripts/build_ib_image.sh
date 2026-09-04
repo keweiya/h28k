@@ -95,12 +95,15 @@ packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 # 预检：官方在线源没有、本地捆绑也没有的包提前剔除，避免整批安装失败
 # 触发逐包降级拖慢组装。apk 系（25.12）用 IB 自带 apk 对在线源做模拟解析
 #（不下载不安装、不生成本地索引——mkndx 生成的索引缺签名元数据会导致
-# make image 解析失败），本地捆绑按文件名前缀判断；opkg 系（24.10）无
+# make image 解析失败），本地捆绑按文件名 glob 判断；opkg 系（24.10）无
 # apk 工具，不做预检（由逐包降级兜底）。
 if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
   ARCH_PACKAGES="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
   APK_BIN="$PWD/staging_dir/host/bin/apk"
   PRE_ROOT="$(mktemp -d)"
+  # 空 root 必须先 initdb（与 IB Makefile 的做法一致），否则模拟解析直接报错
+  "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" --allow-untrusted \
+    add --initdb >/dev/null 2>&1 || true
   apk_check_online() {
     "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
       --repositories-file repositories --allow-untrusted \
@@ -110,15 +113,25 @@ if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
   : > "$missing_file"
   keep=''
   n_enabled=0
+  n_missing=0
   for p in $packages; do
     case "$p" in
       -*) keep="$keep $p"; continue ;;   # 负包名（移除默认包）交给 make image 处理
     esac
     n_enabled=$((n_enabled + 1))
-    if apk_check_online "$p" || ls packages/ | grep -q "^$p-"; then
+    if apk_check_online "$p" || compgen -G "packages/$p-*.apk" >/dev/null; then
       keep="$keep $p"
     else
+      if [ "$n_missing" -eq 0 ]; then
+        # 首个被剔除的包打印模拟输出，便于诊断预检误判
+        echo "---- 预检剔除 $p 的 apk 模拟输出 ----"
+        "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
+          --repositories-file repositories --allow-untrusted \
+          add --simulate "$p" 2>&1 | head -6 || true
+        echo "------------------------------------"
+      fi
       printf '%s\n' "$p" >> "$missing_file"
+      n_missing=$((n_missing + 1))
     fi
   done
   # 保险：正包名被全部剔除说明 apk 模拟本身不可用，放弃预检结果按原清单继续
@@ -133,8 +146,7 @@ if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
   fi
   rm -rf "$PRE_ROOT"
   packages="${keep# }"
-  n_missing="$(grep -c . "$missing_file" || true)"
-  if [ "${n_missing:-0}" -gt 0 ]; then
+  if [ "$n_missing" -gt 0 ]; then
     echo "=== 预检：以下 $n_missing 个包官方源与本地捆绑均没有，已提前跳过 ==="
     cat "$missing_file"
   fi

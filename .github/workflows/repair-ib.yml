@@ -1,0 +1,97 @@
+name: ImageBuilder 修复（为已发布的自建 IB 补写 repositories）
+
+# 历史全量构建（standalone 模式）发布的自建 IB 缺少 repositories（apk 在线源
+# 清单），IB 本地没有的包无法安装。本工作流下载指定版本的 IB 附件，补写
+# repositories 后重打包并覆盖上传回原 Release，全程不重新编译（约 3 分钟）。
+# 新的全量构建已在打包前自动补写（build-base.yml），本工作流用于修复存量附件。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要修复的版本（对应 Base Release）'
+        type: choice
+        required: true
+        default: 25.12.1
+        options:
+          - 25.12.1
+          - 25.12.0
+          - 24.10.6
+          - 24.10.5
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-ib-${{ inputs.version }}
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    name: 修复 ${{ inputs.version }} 的 IB 附件
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VER: ${{ inputs.version }}
+      TAG: immortalwrt-h28k-base-v${{ inputs.version }}
+      ASSET: immortalwrt-v${{ inputs.version }}-h28k-base-imagebuilder-rockchip-armv8.tar.zst
+
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 下载已发布的 IB 附件
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          echo "下载 $url"
+          curl -fsSL --retry 3 -o ib.tar.zst "$url"
+          ls -lh ib.tar.zst
+
+      - name: 解包并补写 repositories
+        run: |
+          rm -rf stage && mkdir stage
+          tar --zstd -xf ib.tar.zst -C stage
+          IB_TOP=$(find stage -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)
+          [ -n "$IB_TOP" ] || { echo "❌ 附件中没有 ImageBuilder 目录"; exit 1; }
+          echo "IB_TOP=$IB_TOP" >> "$GITHUB_ENV"
+          if [ -f "$IB_TOP/repositories" ]; then
+            echo "✅ IB 已自带 repositories，无需修复"
+            echo "NEED_REPAIR=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if [ -f "$IB_TOP/repositories.conf" ]; then
+            echo "⚠️ 24.10（opkg）系列暂不支持在线补写；其本地捆绑包可正常组装（组装侧脚本另有兜底），后续请重跑全量构建获取完整 IB"
+            echo "NEED_REPAIR=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          bash scripts/ensure_ib_repositories.sh "$IB_TOP" "$VER"
+          echo "NEED_REPAIR=1" >> "$GITHUB_ENV"
+
+      - name: 重打包并校验
+        if: env.NEED_REPAIR == '1'
+        run: |
+          command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
+          # 压缩参数与上游打包一致（zstd -T0 --ultra -20），避免默认级别导致附件体积膨胀
+          tar --use-compress-program='zstd -T0 --ultra -20' -cf "$ASSET" -C stage "$(basename "$IB_TOP")"
+          tar --zstd -tf "$ASSET" | grep -q '/repositories$' ||
+            { echo "❌ 修复后仍缺少 repositories"; exit 1; }
+          ls -lh "$ASSET"
+
+      - name: 覆盖上传回 Release
+        if: env.NEED_REPAIR == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "✅ 已覆盖上传 $ASSET 到 $TAG"
+
+      - name: 结论
+        if: always()
+        run: |
+          if [ "${NEED_REPAIR:-1}" = "0" ]; then
+            echo "========== 结论 =========="
+            echo "本次无需修复（IB 已自带 repositories，或为暂不支持的 opkg 系列，见上方说明）"
+          else
+            echo "========== 结论 =========="
+            echo "✅ $TAG 的 $ASSET 已补写 repositories 并覆盖更新"
+          fi

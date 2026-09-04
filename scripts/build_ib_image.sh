@@ -46,38 +46,10 @@ ib_dir="$(find "$work_dir" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*
 [[ -n "$ib_dir" ]] || fail "ImageBuilder directory not found in tarball"
 cd "$ib_dir"
 
-# 官方 buildbot 打包的 IB 自带 repositories（apk 在线源清单）；本地 make imagebuilder
-# 不生成它。缺失时按官方模板生成：arch 与内核 vermagic 从 IB 自身元数据提取，
-# kmods 目录按 vermagic 从官方索引解析，保证与官方 release 完全一致、ABI 不变。
-if [[ ! -f repositories ]]; then
-  [[ -n "$ib_version" ]] ||
-    fail "该 IB 缺少 repositories 文件，且未传入版本号（第 6 个参数），无法生成在线源清单"
-  arch="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
-  kernel_name="$(basename "$(find packages -maxdepth 1 -name 'kernel-*.apk' | head -n1)")"
-  kernel_ver="$(printf '%s' "$kernel_name" | sed -nE 's/^kernel-([0-9][0-9.]*)~.*/\1/p')"
-  kernel_hash="$(printf '%s' "$kernel_name" | sed -nE 's/.*~([0-9a-f]{32})-.*/\1/p')"
-  [[ -n "$arch" && -n "$kernel_ver" && -n "$kernel_hash" ]] ||
-    fail "无法从 IB 元数据解析 arch/内核版本/vermagic（$arch / $kernel_ver / $kernel_hash）"
-  base_url="https://downloads.immortalwrt.org/releases/$ib_version"
-  kmods_dir="$(curl -fsSL --retry 2 "$base_url/targets/rockchip/armv8/kmods/" 2>/dev/null |
-    sed -nE "s#.*href=\"([^\"]*-$kernel_hash)/\".*#\1#p" | head -n1)" || kmods_dir=""
-  {
-    echo "$base_url/targets/rockchip/armv8/packages/packages.adb"
-    echo "$base_url/packages/$arch/base/packages.adb"
-    if [[ -n "$kmods_dir" ]]; then
-      echo "$base_url/targets/rockchip/armv8/kmods/$kmods_dir/packages.adb"
-    fi
-    echo "$base_url/packages/$arch/luci/packages.adb"
-    echo "$base_url/packages/$arch/packages/packages.adb"
-    echo "$base_url/packages/$arch/routing/packages.adb"
-    echo "$base_url/packages/$arch/telephony/packages.adb"
-  } > repositories
-  if [[ -n "$kmods_dir" ]]; then
-    echo "=== IB 缺少 repositories，已按官方模板生成（版本 $ib_version，arch $arch，kmods $kmods_dir）==="
-  else
-    echo "=== IB 缺少 repositories，已生成基础源清单，但未能解析在线 kmods 目录（vermagic $kernel_hash），kmod 仅能用本地捆绑包 ===" >&2
-  fi
-fi
+# 官方 buildbot 打包的 IB 自带 repositories（apk 在线源清单）；本地 make
+# imagebuilder 默认 standalone 模式不生成它。缺失时由共享脚本按官方模板补写，
+# 保证 IB 本地没有的包仍可从官方源安装（与官方 release 完全一致、ABI 不变）。
+bash "$SCRIPT_DIR/ensure_ib_repositories.sh" "$ib_dir" "$ib_version"
 
 if [[ -n "$plugins_tarball" ]]; then
   echo "=== 注入插件包（ipk/apk 自动匹配） ==="

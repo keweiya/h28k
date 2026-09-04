@@ -207,10 +207,23 @@ jobs:
             fi
             echo "=== 单核重打包成功 ==="
           fi
-          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst 2>/dev/null | head -n1)
-          if [ -n "$IB_TARBALL" ] && ! tar --zstd -tf "$IB_TARBALL" | grep -q '/repositories$'; then
-            echo "⚠️ 自建 ImageBuilder 缺少 repositories（官方 buildbot 产物有它）；组装侧 build_ib_image.sh 会自动生成在线源清单，不影响使用"
+          # 自建 IB 默认 standalone 模式（上游 default y if !BUILDBOT）不含
+          # repositories；补写在线源清单后重打包，使发布的 IB 与官方产物一样开箱即用
+          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
+          IB_STAGE=$(mktemp -d)
+          tar --zstd -xf "$IB_TARBALL" -C "$IB_STAGE"
+          IB_TOP=$(find "$IB_STAGE" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)
+          if [ ! -f "$IB_TOP/repositories" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/ensure_ib_repositories.sh" "$IB_TOP" "${{ steps.release.outputs.version }}"
+            # 压缩参数与上游打包一致（zstd -T0 --ultra -20），避免默认级别导致附件体积膨胀
+            tar --use-compress-program='zstd -T0 --ultra -20' -cf "$IB_TARBALL" -C "$IB_STAGE" "$(basename "$IB_TOP")"
+            echo "=== IB 已补写 repositories 并重新打包 ==="
+          else
+            echo "=== IB 已自带 repositories，无需补写 ==="
           fi
+          [ -f "$IB_TOP/repositories" ] || [ -f "$IB_TOP/repositories.conf" ] ||
+            { echo "❌ IB 打包后仍缺少 repositories/repositories.conf"; exit 1; }
+          rm -rf "$IB_STAGE"
           ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
       - name: 校验内核 ABI

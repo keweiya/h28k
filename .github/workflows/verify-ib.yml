@@ -1,0 +1,218 @@
+name: ImageBuilder 详细验证（结构体检 + 官方对照 + 修复验证）
+
+# 在 GitHub runner 上对自建 ImageBuilder 做详细验证（本地 Windows 解不了 .tar.zst）：
+#   体检① 结构：repositories（在线源清单）/ packages.adb 索引 / 内核 apk / apk 主机工具
+#   体检② 设备配方：make info 确认 hinlink_h28k 存在
+#   体检③ 官方对照：下载官方同版本 ImageBuilder，对比根目录差异与 repositories 内容
+#   验证A 现状复现：按现有流程组装（追加一个仅在线源才有的 htop），确认缺 repositories 的实际影响
+#   验证B 修复验证：把官方 repositories 复制进自建 IB 后重新组装，验证在线源恢复、htop 可装入
+# 推送 verify-ib 分支自动触发；合并到 master 后也可在 Actions 手动选版本触发。
+
+on:
+  push:
+    branches: [verify-ib]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要验证的版本（对应 Base Release）'
+        type: choice
+        required: true
+        default: 25.12.1
+        options:
+          - 25.12.1
+          - 25.12.0
+          - 24.10.6
+          - 24.10.5
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-ib-${{ inputs.version || '25.12.1' }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 验证 ${{ inputs.version || '25.12.1' }} 自建 ImageBuilder
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      VER: ${{ inputs.version || '25.12.1' }}
+
+    steps:
+      - name: 检出支持仓库
+        uses: actions/checkout@v4
+
+      - name: 选择基础 Release
+        id: base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" "$VER" "$GITHUB_OUTPUT"
+
+      - name: 下载并解包自建 ImageBuilder
+        run: |
+          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.zst
+          ls -lh ib.tar.zst
+          mkdir -p ib
+          tar --zstd -xf ib.tar.zst -C ib --strip-components=1
+          echo "IB_DIR=$GITHUB_WORKSPACE/ib" >> "$GITHUB_ENV"
+
+      - name: 体检①：结构检查（repositories / 索引 / 内核包）
+        run: |
+          cd "$IB_DIR"
+          echo "=== IB 根目录 ==="
+          ls -A
+          echo
+          echo "=== 结构检查 ==="
+          if [ -f repositories ]; then
+            echo "✅ repositories 存在，内容："
+            cat repositories
+          else
+            echo "❌ repositories 缺失 —— apk 读不到在线官方源，只能使用本地捆绑包"
+          fi
+          if [ -f packages/packages.adb ]; then
+            echo "✅ packages/packages.adb 预生成索引存在"
+          else
+            echo "⚠️ packages/packages.adb 缺失（首次组装时会自动重建，非阻塞）"
+          fi
+          kernel_apk="$(find packages -maxdepth 1 -name 'kernel-*.apk' | head -n1)"
+          if [ -n "$kernel_apk" ]; then
+            echo "✅ 内核 apk 已捆绑：$(basename "$kernel_apk")"
+            basename "$kernel_apk" | sed -nE 's/^kernel-([0-9][0-9.]+)~([0-9a-f]{32})-.*/    内核版本 \1 / vermagic 哈希 \2/p'
+          else
+            echo "❌ 内核 apk 缺失"
+          fi
+          echo "本地捆绑 apk 包数量：$(find packages -maxdepth 1 -name '*.apk' | wc -l)"
+          if [ -x staging_dir/host/bin/apk ]; then
+            echo "✅ apk 主机工具已捆绑"
+          else
+            echo "❌ apk 主机工具缺失"
+          fi
+
+      - name: 体检②：设备配方（make info）
+        run: |
+          cd "$IB_DIR"
+          make info > "$GITHUB_WORKSPACE/make-info.log" 2>&1 || true
+          grep -A3 'hinlink_h28k' "$GITHUB_WORKSPACE/make-info.log" | head -n8 || true
+          if grep -q 'hinlink_h28k' "$GITHUB_WORKSPACE/make-info.log"; then
+            echo "✅ hinlink_h28k 设备配方存在"
+          else
+            echo "❌ hinlink_h28k 设备配方缺失（无法组装 H28K 固件）"
+          fi
+
+      - name: 体检③：对照官方同版本 ImageBuilder
+        run: |
+          base_url="https://downloads.immortalwrt.org/releases/$VER/targets/rockchip/armv8"
+          official_ib="$(curl -fsSL --retry 3 "$base_url/" \
+            | sed -nE 's/.*href="(immortalwrt-imagebuilder[^"]*\.tar\.zst)".*/\1/p' | head -n1)"
+          echo "官方 IB：$official_ib"
+          curl -fsSL --retry 3 -o official-ib.tar.zst "$base_url/$official_ib"
+          mkdir -p official-ib
+          tar --zstd -xf official-ib.tar.zst -C official-ib --strip-components=1
+          echo "=== 官方 IB 根目录 ==="
+          ls -A official-ib
+          echo "=== 根目录差异（< 仅官方 / > 仅自建）==="
+          diff <(ls -A official-ib | sort) <(ls -A ib | sort) || true
+          echo "=== 官方 repositories 内容（自建 IB 所缺的在线源清单）==="
+          cat official-ib/repositories 2>/dev/null || echo "(官方也没有 repositories)"
+
+      - name: 验证A：现状组装复现（追加仅在线源才有的 htop）
+        run: |
+          cp config/ib-packages.list verify-list.conf
+          echo 'htop=y' >> verify-list.conf
+          mkdir -p out-a
+          set +e
+          bash scripts/build_ib_image.sh ib.tar.zst config/firmware.conf verify-list.conf "$(pwd)/out-a" \
+            > verify-a.log 2>&1
+          rc=$?
+          set -e
+          echo "build_ib_image.sh 退出码：$rc"
+          echo "=== repositories 相关报错（现状根因）==="
+          grep -m3 'failed to read repositories' verify-a.log || echo "（无此类报错）"
+          echo "=== 被跳过的包 ==="
+          cat out-a/failed-packages.txt 2>/dev/null || echo "（无）"
+          echo "=== 产物 ==="
+          imgs="$(find out-a -maxdepth 1 -name '*sysupgrade*.img.gz')"
+          if [ -n "$imgs" ]; then ls -lh $imgs; else echo "❌ 未生成固件"; fi
+
+      - name: 验证B：注入官方 repositories 后组装（修复方案验证）
+        run: |
+          cp official-ib/repositories ib/repositories
+          echo "=== 写入自建 IB 的 repositories ==="
+          cat ib/repositories
+          our_hash="$(find ib/packages -maxdepth 1 -name 'kernel-*.apk' | head -n1 \
+            | sed -nE 's/.*~([0-9a-f]{32})-.*/\1/p')"
+          if grep -q "$our_hash" ib/repositories; then
+            echo "✅ 在线 kmods 目录与自建内核 vermagic 一致：$our_hash"
+          else
+            echo "⚠️ vermagic 不一致：自建内核 $our_hash，在线 kmod 将无法匹配"
+          fi
+          pkgs="$(awk '
+            { sub(/[[:space:]]*#.*/, "") }
+            { gsub(/[[:space:]]/, ""); if ($0 == "") next }
+            { if ($0 ~ /=n$/) next; sub(/=y$/, ""); print }
+          ' config/ib-packages.list | tr '\n' ' ')"
+          mkdir -p "$GITHUB_WORKSPACE/out-b"
+          cd ib
+          if ! make image PROFILE=hinlink_h28k \
+              PACKAGES="$pkgs htop" \
+              BIN_DIR="$GITHUB_WORKSPACE/out-b" > "$GITHUB_WORKSPACE/verify-b.log" 2>&1; then
+            echo "❌ 注入 repositories 后 make image 仍失败，日志尾部："
+            tail -n 40 "$GITHUB_WORKSPACE/verify-b.log"
+            exit 1
+          fi
+          echo "✅ make image 成功"
+          tail -n 6 "$GITHUB_WORKSPACE/verify-b.log"
+          echo "=== htop 是否装入 rootfs ==="
+          htop_path="$(find build_dir -type f -name htop | head -n1)"
+          if [ -n "$htop_path" ]; then
+            echo "✅ htop 已装入：$htop_path"
+          else
+            echo "❌ htop 未装入（在线源仍未生效）"
+            exit 1
+          fi
+          if grep -q 'failed to read repositories' "$GITHUB_WORKSPACE/verify-b.log"; then
+            echo "❌ 仍有 repositories 报错"
+            exit 1
+          fi
+          echo "✅ 无 repositories 报错"
+          echo "=== 产物 ==="
+          ls -lh "$GITHUB_WORKSPACE"/out-b/*sysupgrade*.img.gz
+
+      - name: 结论汇总
+        if: always()
+        run: |
+          echo "========== 验证结论 =========="
+          echo "【A 现状】"
+          grep -m1 'failed to read repositories' verify-a.log 2>/dev/null \
+            && echo "  → 确认存在在线源读取失败" || echo "  → 在线源正常"
+          if [ -f out-a/failed-packages.txt ]; then
+            echo "  → 被静默跳过的包：$(paste -sd' ' out-a/failed-packages.txt)"
+          fi
+          echo "【B 修复后】"
+          if [ -f verify-b.log ]; then
+            if grep -q 'failed to read repositories' verify-b.log; then
+              echo "  → ❌ 仍有报错"
+            else
+              echo "  → ✅ repositories 报错消失"
+            fi
+            find out-b -name '*sysupgrade*.img.gz' 2>/dev/null | grep -q . \
+              && echo "  → ✅ 固件生成成功" || echo "  → ❌ 无固件"
+          else
+            echo "  → （验证B 未执行）"
+          fi
+          echo "详细日志见构件 verify-ib-logs"
+
+      - name: 上传验证日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-ib-logs-${{ env.VER }}-${{ github.run_number }}
+          path: |
+            verify-a.log
+            verify-b.log
+            make-info.log
+            out-a/failed-packages.txt
+          if-no-files-found: ignore
+          retention-days: 14

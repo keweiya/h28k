@@ -73,8 +73,8 @@ jobs:
           command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
           # 压缩参数与上游打包一致（zstd -T0 --ultra -20），避免默认级别导致附件体积膨胀
           tar --use-compress-program='zstd -T0 --ultra -20' -cf "$ASSET" -C stage "$(basename "$IB_TOP")"
-          tar --zstd -tf "$ASSET" | grep -q '/repositories$' ||
-            { echo "❌ 修复后仍缺少 repositories"; exit 1; }
+          tar --zstd -tf "$ASSET" | grep -qE '/repositories(\.conf)?$' ||
+            { echo "❌ 修复后仍缺少 repositories/repositories.conf"; exit 1; }
           ls -lh "$ASSET"
 
       - name: 覆盖上传回 Release

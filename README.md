@@ -50,18 +50,19 @@
 ```
 阶段 1 · 全量源码构建（慢，1.5~3 小时，手动触发）
   H28K 固件全量构建：全量编译 → check-abi 门禁
-  → 发布/覆盖更新 Release（tag = h28k-v<版本>）：基础固件 + 自建 ImageBuilder
+  → 发布/覆盖更新 Base Release（tag = immortalwrt-h28k-base-v<版本>）：
+    基础固件 + rootfs.tar.gz + 自建 ImageBuilder
 
 插件包 · SDK 独立编译（约 15~30 分钟，插件更新时手动触发）
   H28K 插件包构建：官方 SDK 编译 nikki / fluent 主题等源码插件
-  → 发布/覆盖更新 Release（tag = h28k-packages-v<版本>）：插件 ipk/apk 集合
+  → 发布/覆盖更新 Packages Release（tag = immortalwrt-h28k-packages-v<版本>）：插件 ipk/apk 集合
 
 阶段 2 · 固件快速组装（快，约 5 分钟，随时手动触发）
   H28K 固件快速组装：下载自建 ImageBuilder + 匹配版本的插件包
   → 注入 IP/密码/主题/软件包 → make image 组装 → ABI 与阶段 1 完全一致
-  → 发布/覆盖更新 Release（tag = h28k-v<版本>，固件附件替换为最新组装产物）
+  → 发布/覆盖更新 Custom Release（tag = immortalwrt-h28k-custom-v<版本>）
 
-每个版本只有一个 Release，重复构建原地覆盖更新，不会堆积；全部工作流均为手动触发。
+每个版本最多三个 Release（base / packages / custom），重复构建原地覆盖更新，不会堆积；全部工作流均为手动触发。日常使用请下载带 -custom 标识的定制固件。
 ```
 
 - **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本下拉选一个或选 `all`（全部已测试版本并行编译，默认 25.12.1），可填 LAN 地址、root 密码、根目录大小。**版本对应是固定的**：补丁与 ABI 校验只对 `supported_versions` 白名单内的版本验证过，其他版本会被拒绝构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。
@@ -93,9 +94,9 @@ h28k-openwrt/
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
 │   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
-    ├── build.yml                    # 阶段 1：全量源码构建（手动，单版本）
-    ├── build-packages.yml           # 插件包：官方 SDK 编译第三方插件 → 覆盖更新 Release
-    └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）
+    ├── build-base.yml               # 阶段 1：全量源码构建（单版本或 all 并行）→ Base Release
+    ├── build-packages.yml           # 插件包：官方 SDK 编译源码插件 → 独立 Packages Release
+    └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）→ Custom Release
 ```
 
 ## 固件组件

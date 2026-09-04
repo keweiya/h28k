@@ -149,16 +149,23 @@ jobs:
             echo "CONFIG_PACKAGE_${name}=y" >> .config
           done
           make defconfig
-          set -o pipefail
+          # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
+          # true 重置为 0，失败会被误判成功、单核 V=s 详细重试永远不会触发）
+          set +e
           for name in "${names[@]}"; do
             echo "=== 编译插件: $name ==="
-            make package/"$name"/compile -j"$(nproc)" 2>&1 | tee -a build.log | grep --line-buffered -iE 'error|failed' || true
+            make package/"$name"/compile -j"$(nproc)" 2>&1 | tee -a build.log | grep --line-buffered -iE 'error|failed'
             code=${PIPESTATUS[0]}
             if [ "$code" -ne 0 ]; then
-              echo "=== $name 转单核重试 ==="
+              echo "=== $name 编译失败（exit $code），转单核详细重试 ==="
               make package/"$name"/compile -j1 V=s 2>&1 | tee -a build-single.log
               code=${PIPESTATUS[0]}
-              [ "$code" -eq 0 ] || exit "$code"
+              if [ "$code" -ne 0 ]; then
+                echo "=== $name 单核重试仍失败 ==="
+                tail -n 200 build-single.log || true
+                exit "$code"
+              fi
+              echo "=== $name 单核重试成功 ==="
             fi
           done
 

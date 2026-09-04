@@ -167,30 +167,47 @@ jobs:
         working-directory: source
         timeout-minutes: 300
         run: |
-          set -o pipefail
-          make -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed' || true
+          # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
+          # true 重置为 0，失败会被误判成功、单核 V=s 详细重试永远不会触发）
+          set +e
+          make -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed'
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            echo "=== 全速编译失败，转单核详细重试 ==="
+            echo "=== 全速编译失败（exit $code），日志尾部 100 行 ==="
+            tail -n 100 build.log || true
+            echo "=== 转单核详细模式重编译（V=s，完整日志）==="
             make -j1 V=s 2>&1 | tee build-single.log
             code=${PIPESTATUS[0]}
             if [ "$code" -ne 0 ]; then
+              echo "=== 单核重编译仍失败 ==="
+              df -h /
               tail -n 200 build-single.log || true
               exit "$code"
             fi
+            echo "=== 单核重编译成功（并行编译为偶发抖动） ==="
+          else
+            echo "=== 全速编译成功 ==="
           fi
 
       - name: 生成 ImageBuilder 工具包
         working-directory: source
         run: |
-          set -o pipefail
-          make imagebuilder -j"$(nproc)" 2>&1 | tee build-ib.log | grep --line-buffered -iE 'error|failed' || true
+          set +e
+          make imagebuilder -j"$(nproc)" 2>&1 | tee build-ib.log | grep --line-buffered -iE 'error|failed'
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
+            echo "=== 并行打包失败（exit $code），转单核详细重试 ==="
+            df -h /
             make imagebuilder -j1 V=s 2>&1 | tee build-ib-single.log
             code=${PIPESTATUS[0]}
-            [ "$code" -eq 0 ] \vert{}\vert{} exit "$code"
+            if [ "$code" -ne 0 ]; then
+              echo "=== ImageBuilder 打包仍失败 ==="
+              tail -n 200 build-ib-single.log || true
+              exit "$code"
+            fi
+            echo "=== 单核重打包成功 ==="
           fi
+          ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
       - name: 校验内核 ABI
         working-directory: source
@@ -208,9 +225,18 @@ jobs:
           mkdir -p release_files
           V="${{ steps.release.outputs.version }}"
           TARGET_DIR="source/bin/targets/rockchip/armv8"
+          shopt -s nullglob
 
           # 剔除无用的 targz-sysupgrade 重复包
           rm -f $TARGET_DIR/*targz-sysupgrade.img.gz 2>/dev/null || true
+
+          # 固件产物缺失时直接失败，避免发布没有固件的 Release
+          SYSUPGRADES=($TARGET_DIR/*hinlink_h28k*sysupgrade.img.gz)
+          if [ ${#SYSUPGRADES[@]} -eq 0 ]; then
+            echo "HINLINK H28K sysupgrade firmware not found in $TARGET_DIR"
+            ls -lh "$TARGET_DIR" 2>/dev/null || true
+            exit 1
+          fi
 
           # 规范化重命名拷贝
           for f in $TARGET_DIR/*hinlink_h28k*ext4-sysupgrade.img.gz; do
@@ -228,7 +254,7 @@ jobs:
 
           echo "=== 整理后待发布文件 ==="
           ls -lh release_files/
-          echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'\%Y-\%m-\%d \%H:\%M')" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
 
       - name: 上传基础固件构件
         uses: actions/upload-artifact@v4

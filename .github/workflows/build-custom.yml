@@ -144,38 +144,45 @@ jobs:
             grep -qxF "$p" failed.txt && continue
             plugins="$plugins $p"
           done
-          plugins="${plugins# }"
-          # 为空时整个"已启用插件"行不输出（对应 bullet 由 PLUGIN_LINE 空值省略）
-          if [[ -n "$plugins" ]]; then
-            echo "PLUGIN_LINE=- **已启用插件**：$plugins" >> "$GITHUB_ENV"
-          else
-            echo "PLUGIN_LINE=" >> "$GITHUB_ENV"
-          fi
-          # 失败清单：中文包一律并入其 app 显示（成功或失败都只显示 app 一条）
+          # 中文包一律并入其 app 显示（成功或失败都只显示 app 一条）
           failed_note=''
           while IFS= read -r p; do
             [[ -n "$p" ]] || continue
             case "$p" in luci-i18n-*) continue ;; esac
             failed_note="$failed_note $p"
           done < failed.txt
-          failed_note="${failed_note# }"
-          if [[ -n "$failed_note" ]]; then
-            echo "FAILED_LINE=- **⚠ 以下插件安装失败，已自动跳过**：$failed_note" >> "$GITHUB_ENV"
-          else
-            echo "FAILED_LINE=" >> "$GITHUB_ENV"
-          fi
-          # 预检跳过清单（官方源未收录）；注意 NOTES 是双引号字符串，
-          # 这里不能带反引号，否则会被 bash 当成命令替换执行。
-          # 中文包同样并入其 app，不单列
           missing_note=''
           while IFS= read -r p; do
             [[ -n "$p" ]] || continue
             case "$p" in luci-i18n-*) continue ;; esac
             missing_note="$missing_note $p"
           done < missing.txt
-          missing_note="${missing_note# }"
-          if [[ -n "$missing_note" ]]; then
-            echo "MISSING_LINE=- **⚠ 以下包官方源未收录，已自动跳过**：$missing_note" >> "$GITHUB_ENV"
+
+          # 多行值写入 GITHUB_ENV 需 <<EOF 语法；子列表逐行一个包便于查看。
+          # 注意值里不能带反引号（NOTES 是双引号字符串，反引号会被命令替换）
+          emit_list() {   # $1=变量名 $2=标题 其余=条目（空格分隔，可为空）
+            var="$1"; title="$2"; shift 2
+            {
+              echo "$var<<LIST_EOF"
+              echo "$title"
+              for p in "$@"; do
+                echo "  - $p"
+              done
+              echo "LIST_EOF"
+            } >> "$GITHUB_ENV"
+          }
+          if [[ -n "${plugins// /}" ]]; then
+            emit_list PLUGIN_LINE "- **已启用插件**：" $plugins
+          else
+            echo "PLUGIN_LINE=" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "${failed_note// /}" ]]; then
+            emit_list FAILED_LINE "- **⚠ 以下插件安装失败，已自动跳过**：" $failed_note
+          else
+            echo "FAILED_LINE=" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "${missing_note// /}" ]]; then
+            emit_list MISSING_LINE "- **⚠ 以下包官方源未收录，已自动跳过**：" $missing_note
           else
             echo "MISSING_LINE=" >> "$GITHUB_ENV"
           fi

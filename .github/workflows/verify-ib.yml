@@ -141,10 +141,10 @@ jobs:
             exit 1
           fi
           echo "✅ 无在线源读取报错"
-          echo "=== htop 是否装入 rootfs（兜底生效的最终判据）==="
-          htop_path="$(find "$IB_DIR/build_dir" -type f -name htop | head -n1)"
-          if [ -n "$htop_path" ]; then
-            echo "✅ htop 已装入：$htop_path"
+          echo "=== htop 是否装入（组装脚本用 mktemp 临时目录，从日志安装记录判断）==="
+          if grep -qE '\) Installing htop \(' verify-a.log; then
+            grep -m1 ') Installing htop (' verify-a.log | sed 's/^/    /'
+            echo "✅ htop 已从在线源装入 rootfs"
           else
             echo "❌ htop 未装入，被跳过的包："
             cat out-a/failed-packages.txt 2>/dev/null || true

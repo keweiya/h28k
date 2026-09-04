@@ -131,16 +131,36 @@ jobs:
 
       - name: 生成 Release 总结信息
         run: |
-          plugins="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
-            | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1 | paste -sd' ' -)"
+          # 只统计官方插件源小节里 =y 的 luci-app-*（不含中文包/清单外/中文界面）
+          enabled="$(sed -n '1,/^# === 清单外/p' "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            | grep -E '^luci-app-[A-Za-z0-9_.+-]+=y$' | cut -d= -f1)"
+          # 安装失败清单（build_ib_image.sh 逐包降级后写入；不存在则视为全部成功）
+          cp out/failed-packages.txt failed.txt 2>/dev/null || touch failed.txt
+          # 安装失败的 app 不计入"已启用"
+          plugins=''
+          for p in $enabled; do
+            grep -qxF "$p" failed.txt || plugins="$plugins $p"
+          done
+          plugins="${plugins# }"
           if [[ -n "$plugins" ]]; then
             echo "PLUGIN_NOTE=**已启用插件**：$plugins" >> "$GITHUB_ENV"
           else
             echo "PLUGIN_NOTE=已启用插件：无（纯净官方组件 + 中文界面）" >> "$GITHUB_ENV"
           fi
-          if [[ -s out/failed-packages.txt ]]; then
-            failed="$(paste -sd' ' out/failed-packages.txt)"
-            echo "FAILED_NOTE=**⚠ 以下插件安装失败，已自动跳过**：$failed" >> "$GITHUB_ENV"
+          # 失败清单：app 失败时其配对中文包合并为同一条（app 都没装上，中文包无需单列）
+          failed_note=''
+          while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            case "$p" in
+              luci-i18n-*-zh-cn)
+                app="luci-app-$(printf '%s' "$p" | sed -E 's/^luci-i18n-//; s/-zh-cn$//')"
+                grep -qxF "$app" failed.txt && continue ;;
+            esac
+            failed_note="$failed_note $p"
+          done < failed.txt
+          failed_note="${failed_note# }"
+          if [[ -n "$failed_note" ]]; then
+            echo "FAILED_NOTE=**⚠ 以下插件安装失败，已自动跳过**：$failed_note" >> "$GITHUB_ENV"
           else
             echo "FAILED_NOTE=全部插件安装成功" >> "$GITHUB_ENV"
           fi

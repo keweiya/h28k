@@ -1,5 +1,6 @@
 # 官方源常用 LuCI 插件开关清单（人工精选自官方全部 166 个插件，配对中文包）
 # 用法：=y 安装进固件，=n 不安装；启用插件时建议把它配对的 luci-i18n-*-zh-cn 一并改为 =y（中文界面）
+# 移除官方默认自带的包：行首加 -（如 -uhttpd），从默认包集中剔除；清单内未启用的包无需此语法（保持 =n 即可）
 # 没有列出的冷门插件：完整目录可用 scripts/fetch_official_packages.sh 生成后查找
 # 源码第三方插件（nikki 等）见 config/source-plugins.list；kmod/base 包在文件末尾"清单外"小节
 
@@ -11,7 +12,7 @@ luci-app-homeproxy=n
 luci-i18n-homeproxy-zh-cn=n
 luci-app-passwall=n
 luci-i18n-passwall-zh-cn=n
-luci-app-openclash=n
+luci-app-openclash=y
 luci-app-v2raya=n
 luci-i18n-v2raya-zh-cn=n
 luci-app-dae=n
@@ -57,8 +58,8 @@ luci-i18n-cloudflared-zh-cn=n
 # === Docker / 容器 ===
 luci-app-docker=n
 luci-i18n-docker-zh-cn=n
-luci-app-dockerman=n
-luci-i18n-dockerman-zh-cn=n
+luci-app-dockerman=y
+luci-i18n-dockerman-zh-cn=y
 luci-app-lxc=n
 luci-i18n-lxc-zh-cn=n
 
@@ -71,8 +72,8 @@ luci-app-n2n=n
 luci-i18n-n2n-zh-cn=n
 luci-app-zerotier=n
 luci-i18n-zerotier-zh-cn=n
-luci-app-ttyd=n
-luci-i18n-ttyd-zh-cn=n
+luci-app-ttyd=y
+luci-i18n-ttyd-zh-cn=y
 luci-app-rustdesk-server=n
 luci-i18n-rustdesk-server-zh-cn=n
 
@@ -109,7 +110,8 @@ luci-i18n-adblock-fast-zh-cn=n
 luci-app-adblock=n
 luci-i18n-adblock-zh-cn=n
 luci-app-adguardhome=y
-luci-i18n-adguardhome-zh-cn=y
+# 官方 25.12.1 源未收录该翻译包（两次组装实测均无法安装），界面暂为英文
+luci-i18n-adguardhome-zh-cn=n
 luci-app-appfilter=n
 luci-i18n-appfilter-zh-cn=n
 luci-app-smartdns=n
@@ -149,8 +151,8 @@ luci-app-netdata=n
 luci-i18n-netdata-zh-cn=n
 luci-app-hd-idle=n
 luci-i18n-hd-idle-zh-cn=n
-luci-app-diskman=n
-luci-i18n-diskman-zh-cn=n
+luci-app-diskman=y
+luci-i18n-diskman-zh-cn=y
 luci-app-watchcat=n
 luci-i18n-watchcat-zh-cn=n
 luci-app-arpbind=n

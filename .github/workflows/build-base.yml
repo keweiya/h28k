@@ -321,6 +321,10 @@ jobs:
           else
             gh release edit "$TAG" --latest=false
           fi
+          # 源码快照同步：把 tag 移到本次构建的 commit，Release 页面的
+          # Source code (zip/tar.gz) 才会随附件一起更新
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$TAG"
 
       - name: 上传失败编译日志
         if: failure()

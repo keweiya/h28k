@@ -92,42 +92,46 @@ fi
 # 去重
 packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 
-# 预检：用 IB 自带 apk 对每个待装包做模拟解析（不下载不安装），官方源与
-# 本地捆绑都没有的包提前剔除，避免整批安装失败触发逐包降级拖慢组装。
-# 先全量模拟一次（最快），失败时再逐包定位。仅支持 apk 系（25.12），
-# opkg 系（24.10）无 apk 工具，不做预检（由逐包降级兜底）。
+# 预检：官方在线源没有、本地捆绑也没有的包提前剔除，避免整批安装失败
+# 触发逐包降级拖慢组装。apk 系（25.12）用 IB 自带 apk 对在线源做模拟解析
+#（不下载不安装、不生成本地索引——mkndx 生成的索引缺签名元数据会导致
+# make image 解析失败），本地捆绑按文件名前缀判断；opkg 系（24.10）无
+# apk 工具，不做预检（由逐包降级兜底）。
 if [ -x "$PWD/staging_dir/host/bin/apk" ]; then
   ARCH_PACKAGES="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
   APK_BIN="$PWD/staging_dir/host/bin/apk"
   PRE_ROOT="$(mktemp -d)"
-  PRE_CACHE="$(mktemp -d)"
-  # 生成本地捆绑包索引（与 make image 内部同款 mkndx 命令），使本地包也参与解析
-  ( cd packages && "$APK_BIN" mkndx --allow-untrusted --output packages.adb ./*.apk ) >/dev/null 2>&1 || true
-  apk_simulate() {
+  apk_check_online() {
     "$APK_BIN" --root "$PRE_ROOT" --arch "$ARCH_PACKAGES" \
-      --repositories-file repositories \
-      --repository "$PWD/packages/packages.adb" \
-      --allow-untrusted --cache-dir "$PRE_CACHE" \
-      add --simulate "$@" >/dev/null 2>&1
+      --repositories-file repositories --allow-untrusted \
+      add --simulate "$1" >/dev/null 2>&1
   }
   missing_file="$out_dir/missing-packages.txt"
   : > "$missing_file"
   keep=''
-  if apk_simulate $packages; then
+  n_enabled=0
+  for p in $packages; do
+    case "$p" in
+      -*) keep="$keep $p"; continue ;;   # 负包名（移除默认包）交给 make image 处理
+    esac
+    n_enabled=$((n_enabled + 1))
+    if apk_check_online "$p" || ls packages/ | grep -q "^$p-"; then
+      keep="$keep $p"
+    else
+      printf '%s\n' "$p" >> "$missing_file"
+    fi
+  done
+  # 保险：正包名被全部剔除说明 apk 模拟本身不可用，放弃预检结果按原清单继续
+  n_kept=0
+  for p in $keep; do
+    case "$p" in -*) ;; *) n_kept=$((n_kept + 1)) ;; esac
+  done
+  if [ "$n_enabled" -gt 0 ] && [ "$n_kept" -eq 0 ]; then
+    echo "⚠️ 预检异常（所有包都被剔除），放弃预检结果，按原清单继续组装"
     keep="$packages"
-  else
-    for p in $packages; do
-      case "$p" in
-        -*) keep="$keep $p"; continue ;;   # 负包名（移除默认包）交给 make image 处理
-      esac
-      if apk_simulate "$p"; then
-        keep="$keep $p"
-      else
-        printf '%s\n' "$p" >> "$missing_file"
-      fi
-    done
+    : > "$missing_file"
   fi
-  rm -rf "$PRE_ROOT" "$PRE_CACHE"
+  rm -rf "$PRE_ROOT"
   packages="${keep# }"
   n_missing="$(grep -c . "$missing_file" || true)"
   if [ "${n_missing:-0}" -gt 0 ]; then

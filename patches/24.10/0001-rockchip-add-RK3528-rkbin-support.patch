@@ -26,7 +26,7 @@ index 94a4ab8e..d1ea2097 100644
 @@ -101,6 +108,29 @@ ifeq ($(BUILD_VARIANT),rk3308-rock-pi-s)
    endef
  endif
-
+ 
 +ifeq ($(BUILD_VARIANT),rk3528)
 +  define Download/rk3528-atf
 +    FILE:=$(RK3528_ATF)

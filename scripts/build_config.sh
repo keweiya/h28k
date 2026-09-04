@@ -61,8 +61,11 @@ check_abi() {
   echo "release=$tag"
   echo "built_abi=$built_abi"
   echo "official_abi=$official_abi"
-  [[ "$built_abi" == "$official_abi" ]] ||
-    fail "kernel ABI does not match official release $version"
+  if [[ "$built_abi" != "$official_abi" ]]; then
+    echo "kernel ABI does not match official $version" >&2
+    echo "hint: 若目标是滚动快照（master / X.Y-SNAPSHOT），官方快照可能已在构建期间更新，重跑工作流即可" >&2
+    exit 1
+  fi
 }
 
 # 解析源码插件清单（config/source-plugins.list）：

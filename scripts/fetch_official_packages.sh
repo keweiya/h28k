@@ -24,8 +24,15 @@ version="${1:-}"
 out_file="${2:-}"
 [[ -n "$version" && -n "$out_file" ]] ||
   fail "usage: $0 <version> <ib-packages.list>"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  fail "invalid version: $version"
+case "$version" in
+  master|*-SNAPSHOT|[0-9]*.[0-9]*.[0-9]*) ;;
+  *) fail "invalid version: $version（支持 X.Y.Z / X.Y-SNAPSHOT / master）" ;;
+esac
+
+case "$version" in
+  master) dl_base="https://downloads.immortalwrt.org/snapshots" ;;
+  *)      dl_base="https://downloads.immortalwrt.org/releases/$version" ;;
+esac
 
 # 网络重试封装：TLS 握手偶发失败很常见
 http_get() {
@@ -62,7 +69,7 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 buildinfo="$(http_get \
-  "https://downloads.immortalwrt.org/releases/$version/targets/rockchip/armv8/feeds.buildinfo")" ||
+  "$dl_base/targets/rockchip/armv8/feeds.buildinfo")" ||
   fail "无法下载 $version 的 feeds.buildinfo"
 
 declare -A feed_of=()

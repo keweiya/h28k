@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 
-# 解析要构建的 ImmortalWrt 版本：只能选 firmware.conf supported_versions 中
-# 已测试的版本（补丁与 ABI 校验仅对这些版本成立，其他版本无法保证 ABI）。
-# 输出 series/tag/version/kernel_kmods 供工作流后续步骤使用。
+# 解析要构建的 ImmortalWrt 版本，支持三种形态：
+#   X.Y.Z        正式 release：源码锁 tag vX.Y.Z，feeds/内核配置/kmods/SDK 取自
+#                releases/X.Y.Z/（目录不可变，ABI 校验稳定）
+#   X.Y-SNAPSHOT openwrt-X.Y 分支滚动快照：官方源 releases/X.Y-SNAPSHOT/，源码锁
+#                version.buildinfo 里的 revision（rNNNNN-<hash>）
+#   master       master 分支滚动快照：官方源 snapshots/，源码锁 revision
+# 滚动快照的官方产物会被后续构建覆盖：从解析到编译完成之间若官方快照更新，
+# ABI 校验会失败——重跑工作流即可（重新解析最新快照）。
+# 具体版本只需系列在 firmware.conf 的 supported_series 内（master 始终可用）；
+# 是否"已验证"由编译后的 ABI 强校验兜底，而不是靠版本白名单拦截。
+# 输出：version/series/kind/tag/clone_ref/clone_commit/base_url/kernel_kmods/
+#       rel_suffix/revision 供工作流后续步骤使用。
 
 set -euo pipefail
 
@@ -10,15 +19,45 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 source "$SCRIPT_DIR/config.sh"
 
-resolve_official_kmods() {
-  local version="$1" kmods
+DL_BASE="https://downloads.immortalwrt.org"
+
+# 正式 release：kmods 目录唯一，取第一个匹配
+resolve_release_kmods() {
+  local base_url="$1" kmods
   # 先完整捕获再取第一行：管道接 head 会在 pipefail 下触发 SIGPIPE
-  kmods="$(curl -fsSL \
-    "https://downloads.immortalwrt.org/releases/$version/targets/rockchip/armv8/kmods/" \
-    | sed -nE 's#.*href="([^"]*-[0-9a-f]{32})/".*#\1#p')"
+  kmods="$(curl -fsSL "$base_url/targets/rockchip/armv8/kmods/" |
+    sed -nE 's#.*href="([^"]*-[0-9a-f]{32})/".*#\1#p')"
   kmods="${kmods%%$'\n'*}"
   [[ "$kmods" =~ -[0-9a-f]{32}$ ]] || return 1
   printf '%s\n' "$kmods"
+}
+
+# 滚动快照：kmods/ 会累积历史内核版本的目录，必须按 profiles.json 的
+# linux_kernel（内核版本 + release + vermagic 哈希）精确定位本次快照的目录
+resolve_snapshot_kmods() {
+  local base_url="$1" obj version release vermagic candidate
+  obj="$(curl -fsSL "$base_url/targets/rockchip/armv8/profiles.json" |
+    grep -oE '"linux_kernel":\{[^}]*\}' || true)"
+  [[ -n "$obj" ]] || return 1
+  version="$(printf '%s\n' "$obj" | sed -nE 's/.*"version":"([^"]+)".*/\1/p')"
+  release="$(printf '%s\n' "$obj" | sed -nE 's/.*"release":"([^"]+)".*/\1/p')"
+  vermagic="$(printf '%s\n' "$obj" | sed -nE 's/.*"vermagic":"([^"]+)".*/\1/p')"
+  [[ -n "$version" && -n "$release" && -n "$vermagic" ]] || return 1
+  candidate="${version}-${release}-${vermagic}"
+  # 与在线 kmods 索引对账（快照站点的 href 是相对路径，直接按子串匹配），
+  # 目录不存在说明官方快照正在轮换，早失败早重跑
+  curl -fsSL "$base_url/targets/rockchip/armv8/kmods/" | grep -qF "$candidate/" || return 1
+  printf '%s\n' "$candidate"
+}
+
+# 滚动快照：version.buildinfo 内容为源码 revision（rNNNNN-<hash>）；
+# 短 hash 在克隆后于分支的浅克隆深度窗口内解析为完整 sha（见 build-base 工作流）
+resolve_snapshot_revision() {
+  local base_url="$1" rev
+  rev="$(curl -fsSL "$base_url/targets/rockchip/armv8/version.buildinfo")"
+  rev="$(trim "$rev")"
+  [[ "$rev" =~ ^r[0-9]+-[0-9a-f]{6,40}$ ]] || return 1
+  printf '%s\n' "$rev"
 }
 
 config_file="${1:-}"
@@ -28,20 +67,52 @@ version_input="${3:-}"
   fail "usage: $0 <firmware.conf> <github-output> <version>"
 load_firmware_config "$config_file"
 
-release_version="${version_input#v}"
-version_in_list "$release_version" ||
-  fail "版本 $release_version 不在已测试列表中，ABI 无法保证（可选：${supported_versions[*]}）"
+version="${version_input#v}"
+kind="$(version_kind "$version")"
+[[ "$kind" != "invalid" ]] ||
+  fail "无法识别的版本：$version（支持 X.Y.Z / X.Y-SNAPSHOT / master）"
+series="$(version_series "$version")"
+series_supported "$series" ||
+  fail "系列 $series 未启用（firmware.conf 的 supported_series：${supported_series[*]}；master 始终可用）"
 
-release_series="${release_version%.*}"
-release_tag="v$release_version"
-kernel_kmods="$(resolve_official_kmods "$release_version")" ||
-  fail "official kmods not found for $release_version"
+tag=""
+clone_commit=""
+if [[ "$kind" == "release" ]]; then
+  tag="v$version"
+  clone_ref="$tag"
+  base_url="$DL_BASE/releases/$version"
+  kernel_kmods="$(resolve_release_kmods "$base_url")" ||
+    fail "official kmods not found for $version"
+  revision="$tag"
+else
+  case "$version" in
+    master) clone_ref="master" ;;
+    *)      clone_ref="openwrt-$series" ;;
+  esac
+  case "$version" in
+    master) base_url="$DL_BASE/snapshots" ;;
+    *)      base_url="$DL_BASE/releases/$version" ;;
+  esac
+  revision="$(resolve_snapshot_revision "$base_url")" ||
+    fail "snapshot revision not found for $version"
+  clone_commit="${revision##*-}"
+  kernel_kmods="$(resolve_snapshot_kmods "$base_url")" ||
+    fail "official kmods not resolved from profiles.json for $version"
+fi
+
+rel_suffix="$(rel_suffix_of "$version")"
 
 {
-  echo "series=$release_series"
-  echo "tag=$release_tag"
-  echo "version=$release_version"
+  echo "version=$version"
+  echo "series=$series"
+  echo "kind=$kind"
+  echo "tag=$tag"
+  echo "clone_ref=$clone_ref"
+  echo "clone_commit=$clone_commit"
+  echo "base_url=$base_url"
   echo "kernel_kmods=$kernel_kmods"
+  echo "rel_suffix=$rel_suffix"
+  echo "revision=$revision"
 } >> "$github_output"
 
-echo "Selected ImmortalWrt release: $release_tag"
+echo "Selected ImmortalWrt $kind: $version（$revision，series $series）"

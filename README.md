@@ -12,8 +12,8 @@
 
 | ImmortalWrt 版本形态 | 补丁目录 | 内容 | 已实测版本 |
 | --- | --- | --- | --- |
-| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/24.10/` | RK3528 内核回移 + H28K 板级支持 + U-Boot 2025.10 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
-| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT） | `patches/25.12/` | 5 个 H28K 板级补丁 | 25.12.0, 25.12.1 与 openwrt-25.12 分支 HEAD |
+| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/24.10/` | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个补丁 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
+| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT） | `patches/25.12/` | U-Boot + H28K 板级支持，共 2 个补丁 | 25.12.0, 25.12.1 与 openwrt-25.12 分支 HEAD |
 | master（滚动快照） | `patches/25.12/`（构建时自动映射） | 与 25.12 同源，跟随 master 演进 | 当前官方快照 revision（见下方说明） |
 
 - **三种版本形态**：
@@ -93,8 +93,9 @@ h28k-openwrt/
 │   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
 ├── patches/
-│   ├── 24.10/                       # 24.10 系补丁（7 个，含 RK3528 内核回移）
-│   └── 25.12/                       # 25.12 系补丁（5 个板级补丁；master 构建时自动映射到此）
+│   ├── 24.10/                       # 24.10 系补丁：0010 bootloader（ATF rkbin + U-Boot 2025.10）、
+│   │                                #   0020 RK3528 内核回移、0030 H28K 板级支持（DT/默认配置/镜像/LED）
+│   └── 25.12/                       # 25.12 系补丁：0010 U-Boot、0030 H28K 板级支持（master 构建时自动映射到此）
 ├── scripts/
 │   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
 │   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希

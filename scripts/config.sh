@@ -21,6 +21,16 @@ version_in_list() {
   return 1
 }
 
+# 判断版本是否在排除名单内（excluded_versions；all 枚举时跳过）。
+# 调用前必须已经执行过 load_firmware_config。
+version_excluded() {
+  local needle="$1" item
+  for item in "${excluded_versions[@]}"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # 判断系列是否允许构建（supported_series；master 滚动快照始终允许）。
 # 调用前必须已经执行过 load_firmware_config。
 series_supported() {
@@ -80,6 +90,7 @@ load_firmware_config() {
   default_series=""
   supported_versions=()
   supported_series=()
+  excluded_versions=()
   lan_ip=""
   password=""
   rootfs_size=""
@@ -96,6 +107,7 @@ load_firmware_config() {
     case "$key" in
       supported_versions) read -r -a supported_versions <<< "$value" ;;
       supported_series) read -r -a supported_series <<< "$value" ;;
+      excluded_versions) read -r -a excluded_versions <<< "$value" ;;
       lan_ip) lan_ip="$value" ;;
       password) password="$value" ;;
       rootfs_size) rootfs_size="$value" ;;
@@ -117,6 +129,11 @@ load_firmware_config() {
   local s
   for s in "${supported_series[@]}"; do
     [[ "$s" =~ ^[0-9]+\.[0-9]+$ ]] || fail "invalid supported series: $s"
+  done
+  # excluded_versions：系列内明确不支持、all 枚举时排除的版本（如 24.10.0 无 phy-leds）
+  local e
+  for e in "${excluded_versions[@]}"; do
+    [[ "$e" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid excluded version: $e"
   done
 
   # 工作流输入覆盖（环境变量，留空 = 使用 conf 默认值）

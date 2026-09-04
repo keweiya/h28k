@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/24.10/` | RK3528 内核回移 + H28K 板级支持 + U-Boot 2025.10 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
 | 25.12.x（X.Y.Z 与 25.12-SNAPSHOT） | `patches/25.12/` | 5 个 H28K 板级补丁 | 25.12.0, 25.12.1 与 openwrt-25.12 分支 HEAD |
-| master（滚动快照） | `patches/master/` | 与 25.12 同源，跟随 master 演进 | 当前官方快照 revision（见下方说明） |
+| master（滚动快照） | `patches/25.12/`（构建时自动映射） | 与 25.12 同源，跟随 master 演进 | 当前官方快照 revision（见下方说明） |
 
 - **三种版本形态**：
   - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
@@ -94,8 +94,7 @@ h28k-openwrt/
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
 ├── patches/
 │   ├── 24.10/                       # 24.10 系补丁（7 个，含 RK3528 内核回移）
-│   ├── 25.12/                       # 25.12 系补丁（5 个板级补丁）
-│   └── master/                      # master 滚动快照补丁（当前与 25.12 同源）
+│   └── 25.12/                       # 25.12 系补丁（5 个板级补丁；master 构建时自动映射到此）
 ├── scripts/
 │   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
 │   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希

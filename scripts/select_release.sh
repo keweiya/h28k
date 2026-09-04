@@ -103,9 +103,19 @@ fi
 
 rel_suffix="$(rel_suffix_of "$version")"
 
+# 补丁目录映射：master 当前与 25.12 板级补丁同源（已在官方快照 revision 上
+# 验证干净应用），直接复用 patches/25.12；上游分化导致补丁失配时再拆出
+# patches/master/ 并把这里的映射改回去
+if [[ "$series" == "master" ]]; then
+  patch_series="25.12"
+else
+  patch_series="$series"
+fi
+
 {
   echo "version=$version"
   echo "series=$series"
+  echo "patch_series=$patch_series"
   echo "kind=$kind"
   echo "tag=$tag"
   echo "clone_ref=$clone_ref"

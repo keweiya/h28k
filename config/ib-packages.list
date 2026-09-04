@@ -108,6 +108,8 @@ luci-app-adblock-fast=n
 luci-i18n-adblock-fast-zh-cn=n
 luci-app-adblock=n
 luci-i18n-adblock-zh-cn=n
+luci-app-adguardhome=y
+luci-i18n-adguardhome-zh-cn=y
 luci-app-appfilter=n
 luci-i18n-appfilter-zh-cn=n
 luci-app-smartdns=n
@@ -130,6 +132,11 @@ luci-app-usteer=n
 luci-i18n-usteer-zh-cn=n
 luci-app-dawn=n
 luci-i18n-dawn-zh-cn=n
+
+# === Web 服务器 ===
+# LuCI 的 nginx 版（不声明与 uhttpd 冲突，两者共存安装；如首启 LuCI 端口冲突
+# 可在设备上停用其一，或改用 -luci -uhttpd + luci-nginx 的整体替换方案）
+luci-nginx=y
 
 # === 监控 / 磁盘 / 系统 ===
 luci-app-nlbwmon=n

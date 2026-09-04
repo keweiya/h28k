@@ -79,7 +79,7 @@ jobs:
           kernel_apk="$(find packages -maxdepth 1 -name 'kernel-*.apk' | head -n1)"
           if [ -n "$kernel_apk" ]; then
             echo "✅ 内核 apk 已捆绑：$(basename "$kernel_apk")"
-            basename "$kernel_apk" | sed -nE 's/^kernel-([0-9][0-9.]+)~([0-9a-f]{32})-.*/    内核版本 \1 / vermagic 哈希 \2/p'
+            basename "$kernel_apk" | sed -nE 's/^kernel-([0-9][0-9.]+)~([0-9a-f]{32})-.*/    内核版本 \1，vermagic 哈希 \2/p'
           else
             echo "❌ 内核 apk 缺失"
           fi

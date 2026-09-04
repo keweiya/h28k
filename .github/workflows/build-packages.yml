@@ -216,16 +216,10 @@ jobs:
           - **已包含插件**：$(cat sdk/plugin-names.txt | tr '\n' ' ')
           - **附件内容**：\`${{ env.PKG_FILE }}\`（解压包含全部预编译 .ipk / .apk 及依赖）"
 
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" "${{ env.PKG_FILE }}" --clobber
-            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
-          else
-            gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES"
-          fi
-          # 源码快照同步：把 tag 移到本次构建的 commit，Release 页面的
-          # Source code (zip/tar.gz) 才会随附件一起更新
-          git tag -f "$TAG" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$TAG"
+          # 直接替换：删除旧 Release 与 tag 后整体重建
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git push origin :refs/tags/"$TAG" 2>/dev/null || true
+          gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES"
 
       - name: 解析基础 Release（ImageBuilder）
         if: inputs.build_firmware
@@ -299,14 +293,8 @@ jobs:
           shopt -s nullglob
           FILES=(custom_release_files/*)
           if [ ${#FILES[@]} -gt 0 ]; then
-            if gh release view "$TAG" > /dev/null 2>&1; then
-              gh release upload "$TAG" "${FILES[@]}" --clobber
-              gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
-            else
-              gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
-            fi
-            # 源码快照同步：把 tag 移到本次组装的 commit，Release 页面的
-            # Source code (zip/tar.gz) 才会随附件一起更新
-            git tag -f "$TAG" "$GITHUB_SHA"
-            git push -f origin "refs/tags/$TAG"
+            # 直接替换：删除旧 Release 与 tag 后整体重建
+            gh release delete "$TAG" --yes 2>/dev/null || true
+            git push origin :refs/tags/"$TAG" 2>/dev/null || true
+            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
           fi

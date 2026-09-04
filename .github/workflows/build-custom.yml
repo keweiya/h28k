@@ -230,19 +230,12 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" "${FILES[@]}" --clobber
-            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
-          else
-            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
-          fi
-
+          # 直接替换：删除旧 Release 与 tag 后整体重建，发布时间、源码快照
+          # 与附件全部对齐本次组装（页面上不再有新旧错位）
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git push origin :refs/tags/"$TAG" 2>/dev/null || true
           if [[ "${{ matrix.version }}" == "25.12.1" ]]; then
-            gh release edit "$TAG" --latest
+            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest
           else
-            gh release edit "$TAG" --latest=false
+            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false
           fi
-          # 源码快照同步：把 tag 移到本次组装的 commit，Release 页面的
-          # Source code (zip/tar.gz) 才会随附件一起更新
-          git tag -f "$TAG" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$TAG"

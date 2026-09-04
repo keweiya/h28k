@@ -83,6 +83,14 @@ jobs:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
+      - name: 安装 SDK 编译依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential clang cmake cpio file flex gawk gettext git libelf-dev \
+            libncurses-dev libssl-dev python3 python3-ply python3-pyelftools \
+            rsync subversion swig unzip upx-ucl wget xxd zlib1g-dev zstd
+
       - name: 检查参数组合
         run: |
           if [[ "${{ inputs.build_firmware }}" == "true" && "${{ inputs.publish_release }}" != "true" ]]; then

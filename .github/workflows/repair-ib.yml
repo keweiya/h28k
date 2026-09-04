@@ -47,7 +47,7 @@ jobs:
           curl -fsSL --retry 3 -o ib.tar.zst "$url"
           ls -lh ib.tar.zst
 
-      - name: 解包并补写 repositories
+      - name: 解包并补写在线源清单
         run: |
           rm -rf stage && mkdir stage
           tar --zstd -xf ib.tar.zst -C stage
@@ -59,8 +59,8 @@ jobs:
             echo "NEED_REPAIR=0" >> "$GITHUB_ENV"
             exit 0
           fi
-          if [ -f "$IB_TOP/repositories.conf" ]; then
-            echo "⚠️ 24.10（opkg）系列暂不支持在线补写；其本地捆绑包可正常组装（组装侧脚本另有兜底），后续请重跑全量构建获取完整 IB"
+          if grep -qE '^src/gz .*releases/' "$IB_TOP/repositories.conf" 2>/dev/null; then
+            echo "✅ repositories.conf 已含官方远程源，无需修复"
             echo "NEED_REPAIR=0" >> "$GITHUB_ENV"
             exit 0
           fi

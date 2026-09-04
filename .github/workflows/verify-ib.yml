@@ -4,7 +4,7 @@ name: ImageBuilder 详细验证（结构体检 + 官方对照 + 修复验证）
 #   体检① 结构：repositories（在线源清单）/ packages.adb 索引 / 内核 apk / apk 主机工具
 #   体检② 设备配方：make info 确认 hinlink_h28k 存在
 #   体检③ 官方对照：下载官方同版本 ImageBuilder，对比根目录差异与 repositories 内容
-#   验证A 现状复现：按现有流程组装（追加一个仅在线源才有的 htop），确认缺 repositories 的实际影响
+#   验证A 组装验证：追加一个仅在线源才有的 htop，检验 build_ib_image.sh 的 repositories 兜底
 #   验证B 修复验证：把官方 repositories 复制进自建 IB 后重新组装，验证在线源恢复、htop 可装入
 # 推送 verify-ib 分支自动触发；合并到 master 后也可在 Actions 手动选版本触发。
 
@@ -117,24 +117,39 @@ jobs:
           echo "=== 官方 repositories 内容（自建 IB 所缺的在线源清单）==="
           cat official-ib/repositories 2>/dev/null || echo "(官方也没有 repositories)"
 
-      - name: 验证A：现状组装复现（追加仅在线源才有的 htop）
+      - name: 验证A：组装验证（追加仅在线源才有的 htop，检验 repositories 兜底）
         run: |
           cp config/ib-packages.list verify-list.conf
           echo 'htop=y' >> verify-list.conf
           mkdir -p out-a
           set +e
           bash scripts/build_ib_image.sh ib.tar.zst config/firmware.conf verify-list.conf "$(pwd)/out-a" \
-            > verify-a.log 2>&1
+            "$VER" > verify-a.log 2>&1
           rc=$?
           set -e
           echo "build_ib_image.sh 退出码：$rc"
-          echo "=== repositories 相关报错（现状根因）==="
-          grep -m3 'failed to read repositories' verify-a.log || echo "（无此类报错）"
+          echo "=== repositories 兜底 ==="
+          grep -m1 '已按官方模板生成' verify-a.log || echo "（未触发兜底：IB 已自带 repositories）"
+          if grep -q 'failed to read repositories' verify-a.log; then
+            echo "❌ 仍存在在线源读取失败"
+            grep -m3 'failed to read repositories' verify-a.log
+            exit 1
+          fi
+          echo "✅ 无在线源读取报错"
+          echo "=== htop 是否装入 rootfs（兜底生效的最终判据）==="
+          htop_path="$(find "$IB_DIR/build_dir" -type f -name htop | head -n1)"
+          if [ -n "$htop_path" ]; then
+            echo "✅ htop 已装入：$htop_path"
+          else
+            echo "❌ htop 未装入，被跳过的包："
+            cat out-a/failed-packages.txt 2>/dev/null || true
+            exit 1
+          fi
           echo "=== 被跳过的包 ==="
           cat out-a/failed-packages.txt 2>/dev/null || echo "（无）"
           echo "=== 产物 ==="
           imgs="$(find out-a -maxdepth 1 -name '*sysupgrade*.img.gz')"
-          if [ -n "$imgs" ]; then ls -lh $imgs; else echo "❌ 未生成固件"; fi
+          if [ -n "$imgs" ]; then ls -lh $imgs; else echo "❌ 未生成固件"; exit 1; fi
 
       - name: 验证B：注入官方 repositories 后组装（修复方案验证）
         run: |
@@ -184,11 +199,13 @@ jobs:
         if: always()
         run: |
           echo "========== 验证结论 =========="
-          echo "【A 现状】"
+          echo "【A 组装验证（含兜底）】"
           grep -m1 'failed to read repositories' verify-a.log 2>/dev/null \
-            && echo "  → 确认存在在线源读取失败" || echo "  → 在线源正常"
+            && echo "  → ❌ 存在在线源读取失败" || echo "  → ✅ 在线源正常"
           if [ -f out-a/failed-packages.txt ]; then
             echo "  → 被静默跳过的包：$(paste -sd' ' out-a/failed-packages.txt)"
+          else
+            echo "  → ✅ 无被跳过的包"
           fi
           echo "【B 修复后】"
           if [ -f verify-b.log ]; then

@@ -207,6 +207,10 @@ jobs:
             fi
             echo "=== 单核重打包成功 ==="
           fi
+          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst 2>/dev/null | head -n1)
+          if [ -n "$IB_TARBALL" ] && ! tar --zstd -tf "$IB_TARBALL" | grep -q '/repositories$'; then
+            echo "⚠️ 自建 ImageBuilder 缺少 repositories（官方 buildbot 产物有它）；组装侧 build_ib_image.sh 会自动生成在线源清单，不影响使用"
+          fi
           ls -lh bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*
 
       - name: 校验内核 ABI

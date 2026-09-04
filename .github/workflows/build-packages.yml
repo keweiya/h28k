@@ -244,7 +244,8 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "$plugins_arg"
+            "$plugins_arg" \
+            "${{ matrix.version }}"
 
       - name: 整理并重命名定制固件产物
         if: inputs.build_firmware

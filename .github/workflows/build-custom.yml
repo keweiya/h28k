@@ -104,7 +104,8 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "$PLUGINS_ARG"
+            "$PLUGINS_ARG" \
+            "${{ matrix.version }}"
 
       - name: 整理并重命名定制产物（剔除重复包，增加 custom 与版本号）
         run: |

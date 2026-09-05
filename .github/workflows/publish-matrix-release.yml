@@ -17,6 +17,16 @@ on:
         type: string
         required: false
         default: ''
+      lan_ip:
+        description: 'LAN 管理地址（仅用于 Release 说明展示，填矩阵触发时的实际值）'
+        type: string
+        required: false
+        default: '192.168.100.1'
+      password:
+        description: 'root 密码（仅用于 Release 说明展示，填矩阵触发时的实际值）'
+        type: string
+        required: false
+        default: 'password'
 
 permissions:
   contents: write
@@ -87,7 +97,7 @@ jobs:
           latest="$MARK_LATEST"
           if [[ -z "$latest" ]]; then
             for v in $(printf '%s\n' "${all_versions_list[@]}" |
-                       grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -uVr); do
+                       grep -E '^[0-9]+[.][0-9]+[.][0-9]+$' | sort -uVr); do
               latest="$v"
               break
             done
@@ -153,7 +163,7 @@ jobs:
 
           # ImageBuilder 是否存在：缺失时阶段 2 组装不可用（矩阵触发未勾选 include_ib）
           ib_ok=0
-          for f in release_files/immortalwrt-*-h28k-base-imagebuilder-*.tar.zst; do
+          for f in release_files/*imagebuilder-*.tar.zst; do
             [ -f "$f" ] && ib_ok=1
           done
           if [[ "$ib_ok" != 1 ]]; then
@@ -164,17 +174,45 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REL: ${{ steps.pack.outputs.rel_suffix }}
+          LAN_IP: ${{ inputs.lan_ip }}
+          PASSWORD: ${{ inputs.password }}
         run: |
-          TAG="immortalwrt-h28k-base-$REL"
-          TITLE="ImmortalWrt H28K 基础固件 $REL（矩阵编译）"
-          NOTES="## ImmortalWrt H28K 基础固件 $REL（矩阵编译产物）
+          # 构建时间取源矩阵 run 的完成时间（Asia/Hong_Kong），失败回退为发布时间
+          BUILD_TIME="$(gh api "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN" --jq .updated_at 2>/dev/null |
+            xargs -I{} TZ=Asia/Hong_Kong date -d {} +'%Y-%m-%d %H:%M' 2>/dev/null || true)"
+          [[ -n "$BUILD_TIME" ]] || BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
 
-          - **构建类型**：矩阵编译（Artifacts 转发布）
-          - **上游版本**：$VERSION
-          - **来源**：https://github.com/${{ github.repository }}/actions/runs/$SOURCE_RUN
-          - **包含附件**：见下方资产列表（命名与全量构建产物一致，可直接用于阶段 2 组装）"
-
+          # 附件清单：与全量构建一致的固定顺序和逐项注释
+          # 注意：条目换行必须放在 $( ) 之外——命令替换会吞掉尾部换行导致条目粘连
+          ATTACH=""
           shopt -s nullglob
+          for f in release_files/*ext4-sysupgrade*.img.gz; do
+            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+          done
+          for f in release_files/*squashfs-sysupgrade*.img.gz; do
+            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+          done
+          for f in release_files/*rootfs.tar.gz; do
+            ATTACH+="$(printf -- '- `%s` (LXC 容器用)' "$(basename "$f")")"$'\n'
+          done
+          for f in release_files/*imagebuilder-*.tar.zst; do
+            ATTACH+="$(printf -- '- `%s` (内核 ABI 一致的自建 ImageBuilder)' "$(basename "$f")")"$'\n'
+          done
+
+          TAG="immortalwrt-h28k-base-$REL"
+          TITLE="ImmortalWrt H28K 基础固件 $REL"
+          NOTES="## ImmortalWrt H28K 基础固件 $REL
+
+          - **构建类型**：矩阵编译（Artifacts 转发布，与源码完整编译产物同构）
+          - **构建时间**：$BUILD_TIME
+          - **上游版本**：$VERSION
+          - **设备型号**：HINLINK H28K (RK3528)
+          - **管理地址**：\`$LAN_IP\`
+          - **默认密码**：\`$PASSWORD\`
+          - **包含附件**：
+          $ATTACH
+          *日常使用建议下载带有 \`-custom\` 标识的定制固件。*"
+
           FILES=(release_files/*)
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "未找到发布文件" >&2

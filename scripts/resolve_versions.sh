@@ -92,6 +92,9 @@ if [[ -n "$version_input" && "$version_input" != "all" ]]; then
   else
     [[ "$(version_kind "$version")" != "invalid" ]] ||
       fail "无法识别的版本：$version（支持 X.Y.Z / X.Y-SNAPSHOT / master / X.Y 系列矩阵 / all）"
+    if version_excluded "$version"; then
+      fail "版本 $version 在排除名单中（firmware.conf 的 excluded_versions）：上游 24.10.1 才引入 phy-leds 脚本，24.10.0 无法应用板级补丁，请改用 24.10.1 及以上"
+    fi
     series="$(version_series "$version")"
     series_supported "$series" ||
       fail "系列 $series 未启用（firmware.conf 的 supported_series：${supported_series[*]}）"

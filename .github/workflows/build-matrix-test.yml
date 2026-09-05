@@ -4,10 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本：24.10 / 25.12（系列矩阵）/ X.Y.Z / X.Y-SNAPSHOT / master / all'
-        type: string
+        description: '要编译的版本（all = 全部支持版本的矩阵）'
+        type: choice
         required: true
-        default: all
+        options:
+          - all
+          - 24.10
+          - 25.12
+          - master
+          - 24.10-SNAPSHOT
+          - 25.12-SNAPSHOT
+          - 25.12.1
+          - 25.12.0
+          - 24.10.6
+          - 24.10.5
+          - 24.10.4
+          - 24.10.3
+          - 24.10.2
+          - 24.10.1
       lan_ip:
         description: 'LAN 管理地址'
         type: string

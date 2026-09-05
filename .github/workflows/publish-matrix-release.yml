@@ -187,16 +187,16 @@ jobs:
           ATTACH=""
           shopt -s nullglob
           for f in release_files/*ext4-sysupgrade*.img.gz; do
-            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '  - `%s`' "$(basename "$f")")"$'\n'
           done
           for f in release_files/*squashfs-sysupgrade*.img.gz; do
-            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '  - `%s`' "$(basename "$f")")"$'\n'
           done
           for f in release_files/*rootfs.tar.gz; do
-            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '  - `%s`' "$(basename "$f")")"$'\n'
           done
           for f in release_files/*imagebuilder-*.tar.zst; do
-            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '  - `%s`' "$(basename "$f")")"$'\n'
           done
 
           TAG="immortalwrt-h28k-base-$REL"

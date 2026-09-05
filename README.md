@@ -22,6 +22,7 @@
   - `master`：master 分支滚动快照，官方源 `snapshots/`，源码锁当前已发布快照对应的 revision。
 - **滚动快照同样强制校验 ABI**：源码锁 revision（官方当前产物所编译的 commit）+ 配置合成一致，产物哈希与解析时刻的官方哈希比对；官方轮换后重跑即可。正式版保持全量 kmod（ALL_KMODS）与官方对齐。
 - **编译统一带 `IGNORE_ERRORS="n m"`**（官方 buildbot 同款，语义见 `package/Makefile`：忽略未选中包 n 与模块包 m 的编译失败，例如 telephony 的 rtpengine 遇上 6.18 内核）。与官方发布版（`n m y`）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包。
+- **ccache 跨构建缓存**（官方 buildbot 同款机制）：`CONFIG_CCACHE=y` + `actions/cache` 持久化 `source/.ccache`（`CCACHE_MAXSIZE=2G`）。同版本重跑、失败重试、官方快照轮换后的重新构建都会命中编译缓存，工具链与内核部分提速最明显；缓存为纯编译加速，不影响 ABI。
 - 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0050` 补丁的前提）。
 - 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
 - 工作流版本选 `all` 时在线枚举官方源的全部支持版本：各系列的已发布 X.Y.Z 与 X.Y-SNAPSHOT（排除 `excluded_versions`，如 24.10.0）加 master，官方新发布的点版本自动纳入、无需改配置；枚举失败时回退到 `supported_versions` 静态列表并告警。

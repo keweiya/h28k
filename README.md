@@ -20,7 +20,8 @@
   - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
   - `X.Y-SNAPSHOT`（如 `25.12-SNAPSHOT`）：`openwrt-X.Y` 分支的滚动快照，官方源 `releases/X.Y-SNAPSHOT/`，源码锁 `version.buildinfo` 里的 revision。
   - `master`：master 分支滚动快照，官方源 `snapshots/`，源码锁当前已发布快照对应的 revision。
-- **滚动快照同样强制校验 ABI**：源码锁 revision（官方当前产物所编译的 commit）+ 配置合成一致，产物哈希与解析时刻的官方哈希比对；官方轮换后重跑即可。快照构建对 feed 的 `=m` 包启用 `IGNORE_ERRORS=m`（与官方 buildbot 行为一致），跳过与最新内核暂时不兼容的个别 feed 包（如 telephony 的 rtpengine vs 6.18），固件自身的 `=y` 包仍强校验。正式版 `X.Y.Z` 保持全量 kmod（ALL_KMODS）与官方对齐。
+- **滚动快照同样强制校验 ABI**：源码锁 revision（官方当前产物所编译的 commit）+ 配置合成一致，产物哈希与解析时刻的官方哈希比对；官方轮换后重跑即可。正式版保持全量 kmod（ALL_KMODS）与官方对齐。
+- **编译统一带 `IGNORE_ERRORS="n m"`**（官方 buildbot 同款，语义见 `package/Makefile`：忽略未选中包 n 与模块包 m 的编译失败，例如 telephony 的 rtpengine 遇上 6.18 内核）。与官方发布版（`n m y`）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包。
 - 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0050` 补丁的前提）。
 - 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
 - 工作流版本选 `all` 时在线枚举官方源的全部支持版本：各系列的已发布 X.Y.Z 与 X.Y-SNAPSHOT（排除 `excluded_versions`，如 24.10.0）加 master，官方新发布的点版本自动纳入、无需改配置；枚举失败时回退到 `supported_versions` 静态列表并告警。

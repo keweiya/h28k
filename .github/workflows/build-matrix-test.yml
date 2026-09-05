@@ -189,13 +189,13 @@ jobs:
         working-directory: source
         timeout-minutes: 300
         run: |
-          # 滚动快照：feed 的 =m 包可能与最新内核不兼容（如 rtpengine vs 6.18），
-          # 与官方 buildbot 一致地跳过这类失败（固件自身的 =y 包仍然强校验）
-          IGNORE_FLAG=""
-          if [ "${{ steps.release.outputs.kind }}" = "snapshot" ]; then
-            IGNORE_FLAG="IGNORE_ERRORS=m"
-            echo "=== 滚动快照：启用 IGNORE_ERRORS=m（跳过与快照内核不兼容的 feed 模块包）==="
-          fi
+          # 与官方 buildbot 一致（phase1 快照与 phase2 发布的编译都带此参数）：
+          # 忽略"未选中包（n）"与"模块包（m）"的编译失败，避免个别 feed 包与
+          # 内核暂时不兼容（如 rtpengine vs 6.18）阻塞整体构建。
+          # 与官方发布版（n m y）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包
+          IGNORE_FLAG="IGNORE_ERRORS=n m"
+          echo "=== IGNORE_ERRORS=n m（官方 buildbot 同款容错）==="
+
           # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
           # true 重置为 0，失败会被误判成功、重试永远不会触发）
           set +e

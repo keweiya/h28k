@@ -205,13 +205,13 @@ jobs:
           # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
           # true 重置为 0，失败会被误判成功、重试永远不会触发）
           set +e
-          make $IGNORE_FLAG -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed'
+          make "$IGNORE_FLAG" -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed'
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
             echo "=== 全速编译失败（exit $code），日志尾部 100 行 ==="
             tail -n 100 build.log || true
             echo "=== 转并行详细模式重编译（V=s，增量继续非全新）==="
-            make $IGNORE_FLAG -j"$(nproc)" V=s 2>&1 | tee build-single.log
+            make "$IGNORE_FLAG" -j"$(nproc)" V=s 2>&1 | tee build-single.log
             code=${PIPESTATUS[0]}
             if [ "$code" -ne 0 ]; then
               echo "=== 重编译仍失败 ==="

@@ -1,27 +1,21 @@
-name: H28K 矩阵编译测试（仅 Artifacts，不发布 Release）
+name: H28K 周更固件（周四 02:00：master + 双快照，基础+定制 同发布）
 
 on:
+  schedule:
+    # UTC 周三 18:00 = 北京/香港时间周四凌晨 02:00
+    - cron: '0 18 * * 3'
   workflow_dispatch:
     inputs:
       version:
-        description: '要编译的版本（all = 全部支持版本的矩阵）'
+        description: '要编译的滚动版本（all = 三个全部）'
         type: choice
         required: true
+        default: all
         options:
           - all
-          - 24.10
-          - 25.12
           - master
           - 24.10-SNAPSHOT
           - 25.12-SNAPSHOT
-          - 25.12.1
-          - 25.12.0
-          - 24.10.6
-          - 24.10.5
-          - 24.10.4
-          - 24.10.3
-          - 24.10.2
-          - 24.10.1
       lan_ip:
         description: 'LAN 管理地址'
         type: string
@@ -41,19 +35,13 @@ on:
           - 2G
           - 1G
           - 512M
-      include_ib:
-        description: 'Artifacts 中包含自建 ImageBuilder（体积较大，约 200MB/版本）'
-        type: boolean
-        required: false
-        default: false
 
-# 仅测试验证用途：产物只保留在 Artifacts（15 天），不创建任何 Release / tag
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: matrix-h28k-${{ inputs.version }}
-  cancel-in-progress: true
+  group: weekly-h28k-${{ inputs.version || 'all' }}
+  cancel-in-progress: false
 
 jobs:
   matrix:
@@ -65,16 +53,18 @@ jobs:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
-      - name: 解析版本列表
+      - name: 生成版本矩阵（定时触发 = 三个滚动版本全编）
         id: resolve
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
-            "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "${{ inputs.version }}" \
-            "$GITHUB_OUTPUT"
+          v="${{ inputs.version }}"
+          if [[ -z "$v" || "$v" == "all" ]]; then
+            echo 'versions=["master","24.10-SNAPSHOT","25.12-SNAPSHOT"]' >> "$GITHUB_OUTPUT"
+          else
+            printf 'versions=["%s"]\n' "$v" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
-    name: 矩阵编译 ${{ matrix.version }}
+    name: 周更编译 ${{ matrix.version }}
     needs: matrix
     strategy:
       fail-fast: false
@@ -84,7 +74,6 @@ jobs:
     timeout-minutes: 360
     env:
       CCACHE_MAXSIZE: 2G
-
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
@@ -119,30 +108,25 @@ jobs:
             "$GITHUB_OUTPUT" \
             "${{ matrix.version }}"
 
-      - name: 克隆源码（release 锁 tag / 滚动快照锁 revision）
+      - name: 克隆源码（滚动快照锁 revision）
         run: |
-          if [ "${{ steps.release.outputs.kind }}" = "release" ]; then
-            git clone --branch "${{ steps.release.outputs.clone_ref }}" --single-branch --depth=1 \
-              https://github.com/immortalwrt/immortalwrt.git source
-          else
-            # 滚动快照：把源码固定到官方已发布产物对应的 revision（version.buildinfo
-            # 解析出的短 hash）。浅克隆后在分支深度窗口内解析完整 commit，逐级加深直到命中
-            git clone --branch "${{ steps.release.outputs.clone_ref }}" --single-branch \
-              --filter=blob:none --no-checkout --depth=1 \
-              https://github.com/immortalwrt/immortalwrt.git source
-            cd source
-            short="${{ steps.release.outputs.clone_commit }}"
-            depth=64
-            until git rev-parse --verify --quiet "${short}^{commit}" >/dev/null; do
-              depth=$((depth * 4))
-              [ "$depth" -le 4096 ] || { echo "revision $short 不在分支 4096 提交窗口内"; exit 1; }
-              echo "=== 加深浅克隆到 $depth ==="
-              git fetch --depth="$depth" --filter=blob:none origin \
-                "${{ steps.release.outputs.clone_ref }}"
-            done
-            git checkout --detach "$short"
-            git log -1 --format='Pinned snapshot commit: %H (%cd)' --date=iso
-          fi
+          # 快照构建：把源码固定到官方已发布产物对应的 revision（version.buildinfo
+          # 解析出的短 hash）。浅克隆后在分支深度窗口内解析完整 commit，逐级加深直到命中
+          git clone --branch "${{ steps.release.outputs.clone_ref }}" --single-branch \
+            --filter=blob:none --no-checkout --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git source
+          cd source
+          short="${{ steps.release.outputs.clone_commit }}"
+          depth=64
+          until git rev-parse --verify --quiet "${short}^{commit}" >/dev/null; do
+            depth=$((depth * 4))
+            [ "$depth" -le 4096 ] || { echo "revision $short 不在分支 4096 提交窗口内"; exit 1; }
+            echo "=== 加深浅克隆到 $depth ==="
+            git fetch --depth="$depth" --filter=blob:none origin \
+              "${{ steps.release.outputs.clone_ref }}"
+          done
+          git checkout --detach "$short"
+          git log -1 --format='Pinned snapshot commit: %H (%cd)' --date=iso
 
       - name: 恢复下载缓存
         uses: actions/cache@v4
@@ -165,7 +149,7 @@ jobs:
         working-directory: source
         run: |
           bash "$GITHUB_WORKSPACE/scripts/apply_patches.sh" \
-            . "$GITHUB_WORKSPACE/patches/${{ steps.release.outputs.patch_series }}"
+            . "$GITHUB_WORKSPACE/patches/${{ steps.release.outputs.series }}"
 
       - name: 使用官方 feeds
         working-directory: source
@@ -214,23 +198,15 @@ jobs:
         working-directory: source
         timeout-minutes: 300
         run: |
-          # 与官方 buildbot 一致（phase1 快照与 phase2 发布的编译都带此参数）：
-          # 忽略"未选中包（n）"与"模块包（m）"的编译失败，避免个别 feed 包与
-          # 内核暂时不兼容（如 rtpengine vs 6.18）阻塞整体构建。
-          # 与官方发布版（n m y）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包
-          IGNORE_FLAG="IGNORE_ERRORS=n m"
-          echo "=== IGNORE_ERRORS=n m（官方 buildbot 同款容错）==="
-
-          # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
-          # true 重置为 0，失败会被误判成功、重试永远不会触发）
+          # 本步骤自行判断退出码：set +e 保住 PIPESTATUS
           set +e
-          make "$IGNORE_FLAG" -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed'
+          make IGNORE_ERRORS="n m" -j"$(nproc)" 2>&1 | tee build.log | grep --line-buffered -iE 'error|failed'
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
             echo "=== 全速编译失败（exit $code），日志尾部 100 行 ==="
             tail -n 100 build.log || true
             echo "=== 转并行详细模式重编译（V=s，增量继续非全新）==="
-            make "$IGNORE_FLAG" -j"$(nproc)" V=s 2>&1 | tee build-single.log
+            make IGNORE_ERRORS="n m" -j"$(nproc)" V=s 2>&1 | tee build-single.log
             code=${PIPESTATUS[0]}
             if [ "$code" -ne 0 ]; then
               echo "=== 重编译仍失败 ==="
@@ -247,8 +223,8 @@ jobs:
         working-directory: source
         run: |
           # make world 在 CONFIG_IB=y 时已经由 target/imagebuilder/install 产出
-          # IB tarball。不要再跑 make imagebuilder：该目标在构建后重新同步
-          # .config 时会丢失 CONFIG_IB，报 "No rule to make target 'imagebuilder'"
+          # IB tarball。不要再跑 make imagebuilder：该目标在构建后重新同步 .config
+          # 时会丢失 CONFIG_IB，报 "No rule to make target 'imagebuilder'"
           IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
           [ -n "$IB_TARBALL" ] ||
             { echo "❌ world 构建未产出 ImageBuilder tarball（检查 .config 的 CONFIG_IB）"; ls -lh bin/targets/rockchip/armv8/ || true; exit 1; }
@@ -279,56 +255,110 @@ jobs:
             "${{ steps.release.outputs.tag }}" \
             "${{ steps.release.outputs.kernel_kmods }}"
 
-      - name: 收集与重命名产物（matrix 标识，不发布 Release）
+      - name: 用 ImageBuilder 组装定制固件（预装 ib-packages.list 插件）
+        working-directory: source
+        env:
+          CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
+        run: |
+          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
+          mkdir -p out
+          bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
+            "$IB_TARBALL" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/config/ib-packages.list" \
+            "$GITHUB_WORKSPACE/out" \
+            "" \
+            "${{ steps.release.outputs.version }}"
+
+      - name: 收集基础+定制产物（同发布到一个 Release）
         id: pack
         run: |
           mkdir -p release_files
-          V="${{ steps.release.outputs.rel_suffix }}"
+          rel="${{ steps.release.outputs.rel_suffix }}"
           TARGET_DIR="source/bin/targets/rockchip/armv8"
           shopt -s nullglob
 
-          # 剔除无用的 targz-sysupgrade 重复包
-          rm -f $TARGET_DIR/*targz-sysupgrade.img.gz 2>/dev/null || true
+          # 基础固件（纯净官方组件）
+          for f in $TARGET_DIR/*hinlink_h28k*ext4-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-ext4-sysupgrade.img.gz"
+          done
+          for f in $TARGET_DIR/*hinlink_h28k*squashfs-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-squashfs-sysupgrade.img.gz"
+          done
+          for f in $TARGET_DIR/*rootfs.tar.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-rootfs.tar.gz"
+          done
+
+          # 定制固件（已预装 ib-packages.list 启用的插件）
+          for f in out/*ext4-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-custom-ext4-sysupgrade.img.gz"
+          done
+          for f in out/*squashfs-sysupgrade.img.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-custom-squashfs-sysupgrade.img.gz"
+          done
+
+          # ImageBuilder（内核 ABI 一致，可自行组装）
+          for f in $TARGET_DIR/immortalwrt-imagebuilder-*.tar.zst; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
+          done
 
           # 固件产物缺失时直接失败
-          SYSUPGRADES=($TARGET_DIR/*hinlink_h28k*sysupgrade.img.gz)
-          if [ ${#SYSUPGRADES[@]} -eq 0 ]; then
-            echo "HINLINK H28K sysupgrade firmware not found in $TARGET_DIR"
-            ls -lh "$TARGET_DIR" 2>/dev/null || true
+          BASE_OK=0; CUSTOM_OK=0
+          for f in release_files/*h28k-base*squashfs-sysupgrade*; do [ -f "$f" ] && BASE_OK=1; done
+          for f in release_files/*h28k-custom*squashfs-sysupgrade*; do [ -f "$f" ] && CUSTOM_OK=1; done
+          [[ "$BASE_OK" == 1 && "$CUSTOM_OK" == 1 ]] ||
+            { echo "❌ 基础/定制固件缺失"; ls -lh release_files/; exit 1; }
+
+          echo "=== 周更产物（基础 + 定制）==="
+          ls -lh release_files/
+          echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
+
+      - name: 发布 Release（唯一周更 Release，原地重建）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REL: ${{ steps.release.outputs.rel_suffix }}
+          REVISION: ${{ steps.release.outputs.revision }}
+          LAN_IP: ${{ inputs.lan_ip }}
+          PASSWORD: ${{ inputs.password }}
+        run: |
+          TAG="immortalwrt-h28k-$REL"
+          TITLE="ImmortalWrt H28K 周更固件 $REL（基础 + 定制）"
+          NOTES="## ImmortalWrt H28K 周更固件 $REL（基础 + 定制）
+
+          - **构建类型**：每周四定时编译（基础固件 + 定制固件同发布，默认 2G 根目录）
+          - **构建时间**：${{ env.BUILD_TIME }}
+          - **上游版本**：$REVISION
+          - **设备型号**：HINLINK H28K (RK3528)
+          - **管理地址**：\`$LAN_IP\`
+          - **默认密码**：\`$PASSWORD\`
+          - **基础固件**（纯净官方组件，不含第三方插件）：
+            - \`immortalwrt-$REL-h28k-base-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-$REL-h28k-base-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-$REL-h28k-base-rootfs.tar.gz\`
+          - **定制固件**（已预装 config/ib-packages.list 启用的插件）：
+            - \`immortalwrt-$REL-h28k-custom-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-$REL-h28k-custom-ext4-sysupgrade.img.gz\`
+          - **ImageBuilder**（内核 ABI 一致，可自行组装）：
+            - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`"
+
+          shopt -s nullglob
+          FILES=(release_files/*)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "未找到发布文件" >&2
             exit 1
           fi
 
-          # 规范化重命名拷贝（matrix 标识，与正式 Release 产物区分）
-          for f in $TARGET_DIR/*hinlink_h28k*ext4-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-matrix-ext4-sysupgrade.img.gz"
-          done
-          for f in $TARGET_DIR/*hinlink_h28k*squashfs-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-matrix-squashfs-sysupgrade.img.gz"
-          done
-          for f in $TARGET_DIR/*rootfs.tar.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-matrix-rootfs.tar.gz"
-          done
-          if [ "${{ inputs.include_ib }}" = "true" ]; then
-            for f in $TARGET_DIR/immortalwrt-imagebuilder-*; do
-              [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-matrix-imagebuilder-rockchip-armv8.tar.zst"
-            done
-          fi
-
-          echo "=== 矩阵编译产物（仅 Artifacts） ==="
-          ls -lh release_files/
-
-      - name: 上传矩阵编译产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: h28k-matrix-${{ matrix.version }}-${{ github.run_number }}
-          path: release_files/*
-          retention-days: 15
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git push origin :refs/tags/"$TAG" 2>/dev/null || true
+          # 周更 rolling 版本不抢占 latest（latest 保持给最新正式版）
+          gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false
+          echo "=== 已发布 $TAG ==="
 
       - name: 上传失败编译日志
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: 矩阵编译失败日志-${{ matrix.version }}-${{ github.run_number }}
+          name: 周更编译失败日志-${{ matrix.version }}-${{ github.run_number }}
           path: |
             source/build*.log
             source/*.rej

@@ -76,12 +76,18 @@
   → 注入 IP/密码/主题/软件包 → make image 组装 → ABI 与阶段 1 完全一致
   → 发布/覆盖更新 Custom Release（tag = immortalwrt-h28k-custom-v<版本>）
 
+周更 · 定时编译（每周四凌晨 2:00 自动触发，也可手动选单个滚动版本）
+  H28K 周更固件：master + 24.10-SNAPSHOT + 25.12-SNAPSHOT 三路源码编译
+  → 基础固件 + 用 ImageBuilder 组装的定制固件（预装 ib-packages.list 插件）
+  → 同发布到一个 Release（tag = immortalwrt-h28k-<版本>，默认 2G 根目录）
+
 每个版本最多三个 Release（base / packages / custom），重复构建原地覆盖更新，不会堆积；全部工作流均为手动触发。日常使用请下载带 -custom 标识的定制固件。
 ```
 
 - **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会自动补写 `repositories` 在线源清单（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成），IB 本地没有的包组装时从官方源在线拉取。
 - **插件包**：Actions → 「H28K 插件包构建」→ 选版本。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟），也可勾选"立即组装固件"一步出固件。
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。
+- **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`）；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 
@@ -109,6 +115,7 @@ h28k-openwrt/
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
 │   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
+    ├── build-weekly.yml             # 周更：周四 02:00 定时编译 master + 双快照（基础+定制 同 Release）
     ├── build-base.yml               # 阶段 1：全量源码构建（单版本或 all 并行）→ Base Release
     ├── build-packages.yml           # 插件包：官方 SDK 编译源码插件 → 独立 Packages Release
     └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）→ Custom Release

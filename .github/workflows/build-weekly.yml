@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '要编译的滚动版本（all = 三个全部）'
+        description: '要编译的滚动版本'
         type: choice
         required: true
         default: all
         options:
           - all
           - master
-          - 24.10-SNAPSHOT
           - 25.12-SNAPSHOT
+          - 24.10-SNAPSHOT
       lan_ip:
         description: 'LAN 管理地址'
         type: string

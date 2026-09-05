@@ -8,7 +8,7 @@ fail() { echo "error: $*" >&2; exit 1; }
 #   series = 24.10 / 25.12（master 构建由调用方映射为 25.12）
 # 补丁目录为单层结构，命名规则：<序号>-<功能>.<系列>.patch
 #   - 序号决定应用顺序（字典序）
-#   - .<系列> 后缀决定适用范围：仅应用与 series 匹配的补丁；
+#   - -v<系列> 后缀决定适用范围：仅应用与 series 匹配的补丁；
 #     未知系列后缀视为命名错误，直接失败（防止补丁被静默跳过）
 
 source_dir="${1:-}"
@@ -34,9 +34,9 @@ for patch in "${patches[@]}"; do
   base="$(basename "$patch" .patch)"
   # 系列后缀取自文件名末段（.24.10 / .25.12）；不能用 ${base##*.}——版本号本身带点
   case "$base" in
-    *.24.10) scope="24.10" ;;
-    *.25.12) scope="25.12" ;;
-    *) fail "补丁 $base 的系列后缀无法识别（应为 .24.10 或 .25.12）" ;;
+    *-v24.10) scope="24.10" ;;
+    *-v25.12) scope="25.12" ;;
+    *) fail "补丁 $base 的系列后缀无法识别（应为 -v24.10 或 -v25.12）" ;;
   esac
   [[ "$scope" == "$series" ]] || continue
   echo "=== Applying patch: $(basename "$patch") ==="

@@ -38,24 +38,6 @@
 3. 24.10 系特例：计算 vermagic 时排除 `CONFIG_CLK_RK3528=y`——官方 6.6 内核没有此选项，H28K 补丁新增的时钟选项必须从 ABI 哈希中剔除，否则与官方 kmods 不一致。
 4. 编译后强校验：构建出的 `.vermagic` 必须等于官方 kmods 目录哈希，不一致则构建直接失败。
 
-## 设计说明：为什么不移植 amlogic-s9xxx-openwrt 的打包框架
-
-[amlogic-s9xxx-openwrt](https://github.com/ophub/amlogic-s9xxx-openwrt) 支持 200+ 设备和多内核切换，其核心机制是：编译通用的 `armsr/armv8` rootfs，再用 `remake` 脚本配合外置预编译内核（ophub 内核）重新打包。`remake` 会把 rootfs 内 `lib/modules/*` 整体替换为 ophub 内核的模块，因此它与官方插件仓库的兼容性是：
-
-| 插件类型 | amlogic 路线 | 本仓库（ABI 一致路线） |
-| --- | --- | --- |
-| 纯用户态插件（luci-app、主题等） | ✅ 可装（官方用户态包按 aarch64_generic 架构共享） | ✅ 可装 |
-| kmod 及依赖 kmod 的插件 | ❌ vermagic 不匹配，只能 `--force-depends` 绕过 | ✅ 直接安装 |
-
-本仓库以"官方插件可用"为硬性要求，因此明确**不移植**以下内容（设计决策记录）：
-
-1. armsr rootfs + remake 重打包——kmod ABI 冲突（见上表）。
-2. ophub 多内核在线切换——依赖 ophub 内核 tar 包体系，同样破坏 ABI。
-3. luci-app-amlogic 图形化安装 EMMC / btrfs 快照回滚——依赖 flippy 式 btrfs 分区布局与 `/etc` 子卷；原生 rockchip 镜像已支持 dd 写 SD 启动后 sysupgrade / 直接 dd 安装 EMMC。
-4. `model_database.conf` 多设备表——单板仓库不需要。
-
-从 amlogic-s9xxx-openwrt 移植的是它的**多版本工程化骨架**：按系列组织的补丁与配置、矩阵化自动构建、可复用工作流、分册文档与按系列保留的 Release 规范。
-
 ## 使用
 
 本仓库采用**三段式构建**（基础固件 / 插件包 / 定制固件分离，插件更新无需全量重编）：
@@ -135,3 +117,8 @@ h28k-openwrt/
 - LAN：`eth0`（板上 GMAC）
 - WAN：`eth1`（PCIe RTL8111HS）
 - 固件设备名：`hinlink_h28k`
+
+## 参考代码
+
+- [Ssrtvb/hinlink-h28k](https://github.com/Ssrtvb/hinlink-h28k)
+- [ophub/amlogic-s9xxx-openwrt](https://github.com/ophub/amlogic-s9xxx-openwrt)

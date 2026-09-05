@@ -193,10 +193,10 @@ jobs:
             ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
           done
           for f in release_files/*rootfs.tar.gz; do
-            ATTACH+="$(printf -- '- `%s` (LXC 容器用)' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
           done
           for f in release_files/*imagebuilder-*.tar.zst; do
-            ATTACH+="$(printf -- '- `%s` (内核 ABI 一致的自建 ImageBuilder)' "$(basename "$f")")"$'\n'
+            ATTACH+="$(printf -- '- `%s`' "$(basename "$f")")"$'\n'
           done
 
           TAG="immortalwrt-h28k-base-$REL"

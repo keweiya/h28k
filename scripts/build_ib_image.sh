@@ -158,19 +158,56 @@ fi
 echo "=== 组装镜像（PROFILE=hinlink_h28k） ==="
 echo "    额外软件包: ${packages:-（无）}"
 
+IB_META="$ib_dir/.targetinfo"
+
 run_make_image() {
   make image \
     PROFILE=hinlink_h28k \
     PACKAGES="$1" \
     FILES="$ib_dir/files" \
     ROOTFS_PARTSIZE="$rootfs_size" \
-    BIN_DIR="$out_dir"
+    BIN_DIR="$out_dir" 2>&1 | tee "$out_dir/make-image.log"
+  return ${PIPESTATUS[0]}
+}
+
+# 设备配方引用的包若在所有源都不可得（如 24.10.1/2/3 的 kmod-input-adc-keys、
+# master 的 kmod-saradc-rockchip——上游删除/未产出），make image 会失败。
+# 从 make image 日志解析缺失包名，自动从设备配方（.targetinfo）剔除后重试。
+prune_missing_device_packages() {
+  local log="$1" pkg pruned=0 missing
+  missing="$({
+    grep -oE "Unknown package '[^']+'" "$log" 2>/dev/null | sed -E "s/.*'([^']+)'.*/\1/"
+    grep -oE "^  [a-zA-Z0-9+._-]+ [(]no such package[)]" "$log" 2>/dev/null | awk '{print $1}'
+  })" || true
+  [[ -n "$missing" ]] || return 1
+  while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] || continue
+    if grep -qE "^Target-Profile-Packages: .*$pkg" "$IB_META" 2>/dev/null; then
+      sed -i "/^Target-Profile-Packages:/ { s/$pkg //g; s/ $pkg//g; s/  */ /g }" "$IB_META"
+      echo "    已从设备配方剔除缺失包: $pkg"
+      pruned=$((pruned+1))
+    fi
+  done <<< "$missing"
+  [[ $pruned -gt 0 ]]
 }
 
 declare -a failed_pkgs=()
 good_pkgs="$packages"
-# 先整批安装；失败则逐个插件定位，跳过安装失败的，最后用成功集合重组镜像
-if ! run_make_image "$good_pkgs"; then
+per_package_done=0
+round=0
+until run_make_image "$good_pkgs"; do
+  round=$((round+1))
+  # 第一优先：自动剔除设备配方中不可安装的缺失包（最多 3 轮）
+  if [[ $round -le 3 ]] && prune_missing_device_packages "$out_dir/make-image.log"; then
+    echo "=== 已剔除缺失设备包，重试组装（第 $round 轮）==="
+    continue
+  fi
+  # 无可剔除：转为逐包降级，定位用户插件失败项（仅一轮）
+  if [[ "$per_package_done" == 1 ]]; then
+    echo "❌ 镜像组装失败（已用尽自动容错）" >&2
+    exit 1
+  fi
+  per_package_done=1
   echo "=== 批量安装失败，转为逐个插件安装以定位失败项 ==="
   good_pkgs=""
   for p in $packages; do
@@ -183,8 +220,7 @@ if ! run_make_image "$good_pkgs"; then
     fi
   done
   echo "=== 用成功集合重组最终镜像 ==="
-  run_make_image "$good_pkgs"
-fi
+done
 
 if (("${#failed_pkgs[@]}")); then
   printf '%s\n' "${failed_pkgs[@]}" > "$out_dir/failed-packages.txt"

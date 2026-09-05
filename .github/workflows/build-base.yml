@@ -160,7 +160,7 @@ jobs:
         working-directory: source
         run: |
           bash "$GITHUB_WORKSPACE/scripts/apply_patches.sh" \
-            . "$GITHUB_WORKSPACE/patches/${{ steps.release.outputs.patch_series }}"
+            . "$GITHUB_WORKSPACE/patches" "${{ steps.release.outputs.patch_series }}"
 
       - name: 使用官方 feeds
         working-directory: source

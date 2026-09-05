@@ -12,9 +12,8 @@
 
 | ImmortalWrt 版本形态 | 补丁目录 | 内容 | 已实测版本 |
 | --- | --- | --- | --- |
-| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/24.10/` | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个补丁 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
-| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT） | `patches/25.12/` | U-Boot + H28K 板级支持，共 2 个补丁 | 25.12.0, 25.12.1 与 openwrt-25.12 分支 HEAD |
-| master（滚动快照） | `patches/25.12/`（构建时自动映射） | 与 25.12 同源，跟随 master 演进 | 当前官方快照 revision（见下方说明） |
+| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/`（`.24.10` 后缀） | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个补丁 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
+| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT）与 master | `patches/`（`.25.12` 后缀，master 自动映射） | U-Boot + H28K 板级支持，共 2 个补丁 | 25.12.0, 25.12.1, openwrt-25.12 分支 HEAD 与当前官方快照 revision |
 
 - **三种版本形态**：
   - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
@@ -27,7 +26,7 @@
 - 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
 - 工作流版本选 `all` 时在线枚举官方源的全部支持版本：各系列的已发布 X.Y.Z 与 X.Y-SNAPSHOT（排除 `excluded_versions`，如 24.10.0）加 master，官方新发布的点版本自动纳入、无需改配置；枚举失败时回退到 `supported_versions` 静态列表并告警。
 - 内核版本跟随官方对应版本（24.10 系为 6.6.x，25.12 系为 6.12.x，master 当前为 6.18.x，以官方实际发布为准）。
-- 补丁按文件名字典序应用（`git apply --3way`），文件名前缀数字即应用顺序。
+- 补丁位于单层 `patches/` 目录，命名 `<序号>-<功能>.<系列>.patch`：序号决定应用顺序（`git apply --3way`），后缀决定适用系列（`master` 构建自动映射到 `.25.12`），未匹配与后缀无法识别的补丁会在应用阶段直接报错。
 - 每次构建强制校验 ABI，见下文"ABI 保证机制"。
 
 ## ABI 保证机制
@@ -101,17 +100,19 @@ h28k-openwrt/
 │   ├── source-plugins.list          # 源码插件清单（唯一插件入口，默认全注释保持纯净）
 │   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
-├── patches/
-│   ├── 24.10/                       # 24.10 系补丁：0010 bootloader（ATF rkbin + U-Boot 2025.10）、
-│   │                                #   0020 RK3528 内核回移、0030 H28K 板级支持（DT/默认配置/镜像/LED）
-│   └── 25.12/                       # 25.12 系补丁：0010 U-Boot、0030 H28K 板级支持（master 构建时自动映射到此）
+├── patches/                         # 单层目录；命名 <序号>-<功能>.<系列>.patch（序号=应用顺序，后缀=适用系列）
+│   ├── 0010-bootloader.24.10.patch  # 24.10：ATF rkbin + 独立 U-Boot 2025.10
+│   ├── 0010-bootloader.25.12.patch  # 25.12/master：uboot-rockchip 增加 H28K
+│   ├── 0020-kernel-backport.24.10.patch # 24.10：RK3528 内核回移
+│   ├── 0030-board-support.24.10.patch    # 24.10：H28K 板级支持（DT/默认配置/镜像/LED）
+│   └── 0030-board-support.25.12.patch    # 25.12/master：H28K 板级支持
 ├── scripts/
 │   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
 │   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希
 │   ├── select_sdk.sh                # 解析官方 SDK 下载地址
 │   ├── select_ib.sh                 # 选基础 Release（IB 附件 + 匹配版本的插件包附件）
 │   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小）
-│   ├── apply_patches.sh             # 按字典序应用系列补丁
+│   ├── apply_patches.sh             # 按系列后缀过滤并按字典序应用补丁
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
 │   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/

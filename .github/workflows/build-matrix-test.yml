@@ -161,7 +161,8 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/build_config.sh" prepare \
             . \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "$GITHUB_ENV"
+            "$GITHUB_ENV" \
+            "${{ steps.release.outputs.kind }}"
 
       - name: 准备内核配置
         working-directory: source
@@ -210,27 +211,17 @@ jobs:
             echo "=== 全速编译成功 ==="
           fi
 
-      - name: 生成 ImageBuilder 工具包（验证打包与在线源清单逻辑）
+      - name: 收集 ImageBuilder 工具包并补写在线源清单
         working-directory: source
         run: |
-          set +e
-          make imagebuilder -j"$(nproc)" 2>&1 | tee build-ib.log | grep --line-buffered -iE 'error|failed'
-          code=${PIPESTATUS[0]}
-          if [ "$code" -ne 0 ]; then
-            echo "=== 并行打包失败（exit $code），转单核详细重试 ==="
-            df -h /
-            make imagebuilder -j1 V=s 2>&1 | tee build-ib-single.log
-            code=${PIPESTATUS[0]}
-            if [ "$code" -ne 0 ]; then
-              echo "=== ImageBuilder 打包仍失败 ==="
-              tail -n 200 build-ib-single.log || true
-              exit "$code"
-            fi
-            echo "=== 单核重打包成功 ==="
-          fi
+          # make world 在 CONFIG_IB=y 时已经由 target/imagebuilder/install 产出
+          # IB tarball。不要再跑 make imagebuilder：该目标在构建后重新同步
+          # .config 时会丢失 CONFIG_IB，报 "No rule to make target 'imagebuilder'"
+          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
+          [ -n "$IB_TARBALL" ] ||
+            { echo "❌ world 构建未产出 ImageBuilder tarball（检查 .config 的 CONFIG_IB）"; ls -lh bin/targets/rockchip/armv8/ || true; exit 1; }
           # 自建 IB 默认 standalone 模式（上游 default y if !BUILDBOT）不含
           # repositories；补写在线源清单后重打包（滚动快照走 snapshots 源模板）
-          IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
           IB_STAGE=$(mktemp -d)
           tar --zstd -xf "$IB_TARBALL" -C "$IB_STAGE"
           IB_TOP=$(find "$IB_STAGE" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)

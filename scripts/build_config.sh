@@ -33,11 +33,18 @@ enable_official_kmods() {
 }
 
 prepare() {
-  local source_dir="$1" config_file="$2" github_env="$3"
+  local source_dir="$1" config_file="$2" github_env="$3" kind="${4:-release}"
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
   apply_device_config "$source_dir" "$lan_ip" "$password" "$default_theme"
-  [[ "$check_official_abi" == true ]] && enable_official_kmods "$source_dir"
+  # 官方 kmods 全量构建（CONFIG_ALL_KMODS）仅为与官方源 ABI 对齐服务：
+  # 正式版必需；滚动快照不做 ABI 校验，跳过后可避免与快照内核不兼容的
+  # feed kmod（如 telephony 的 rtpengine 在 6.18 上编译失败）拖垮构建
+  if [[ "$check_official_abi" == true && "$kind" != "snapshot" ]]; then
+    enable_official_kmods "$source_dir"
+  elif [[ "$kind" == "snapshot" ]]; then
+    echo "滚动快照：跳过 CONFIG_ALL_KMODS 全量 kmod 构建（仅构建固件所需的 kmod）"
+  fi
   printf 'FIRMWARE_LAN_IP=%s\nFIRMWARE_PASSWORD=%s\n' "$lan_ip" "$password" >> "$github_env"
 }
 
@@ -104,8 +111,8 @@ run_source_plugins() {
 
 case "${1:-}" in
   prepare)
-    [[ $# -eq 4 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env>"
-    prepare "$2" "$3" "$4"
+    [[ $# -eq 4 || $# -eq 5 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env> [kind]"
+    prepare "$2" "$3" "$4" "${5:-release}"
     ;;
   source-plugins)
     [[ $# -eq 3 ]] || fail "usage: $0 source-plugins <sdk-dir> <source-plugins.list>"

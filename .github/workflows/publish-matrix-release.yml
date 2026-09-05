@@ -46,9 +46,10 @@ jobs:
           MARK_LATEST: ${{ inputs.mark_latest }}
         run: |
           fail() { echo "error: $*" >&2; exit 1; }
-          # shellcheck source=./config.sh
-          source "$GITHUB_WORKSPACE/scripts/config.sh"
-          load_firmware_config "$GITHUB_WORKSPACE/config/firmware.conf"
+          # 自包含：不依赖 checkout 分支的 scripts/config.sh（master 指针检出的是旧版）
+          is_known_version() {
+            [[ "$1" == master || "$1" =~ ^[0-9]+[.][0-9]+-SNAPSHOT$ || "$1" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]
+          }
 
           names="$(gh api "repos/{owner}/{repo}/actions/runs/$RUN_ID/artifacts?per_page=100" \
             --paginate --jq ".artifacts[].name")" ||
@@ -67,10 +68,11 @@ jobs:
               for f in $FILTER; do [[ "$f" == "$v" ]] && ok=1; done
               [[ "$ok" == 1 ]] || continue
             fi
-            [[ "$(version_kind "$v")" != "invalid" ]] ||
+            if ! is_known_version "$v"; then
               fail "无法识别矩阵产物版本：$v"
-            if version_excluded "$v"; then
-              echo "跳过排除名单中的版本：$v" >&2
+            fi
+            if [[ "$v" == "24.10.0" ]]; then
+              echo "跳过 24.10.0（上游 24.10.1 才引入 phy-leds，无法应用板级补丁）" >&2
               continue
             fi
             seen[$v]=1
@@ -128,9 +130,11 @@ jobs:
         id: pack
         run: |
           fail() { echo "error: $*" >&2; exit 1; }
-          # shellcheck source=./config.sh
-          source "$GITHUB_WORKSPACE/scripts/config.sh"
-          rel="$(rel_suffix_of "$VERSION")"
+          # 自包含 rel_suffix：正式版 vX.Y.Z，滚动快照用原样字符串（与全量构建一致）
+          case "$VERSION" in
+            master|*-SNAPSHOT) rel="$VERSION" ;;
+            *) rel="v$VERSION" ;;
+          esac
           printf 'rel_suffix=%s\n' "$rel" >> "$GITHUB_OUTPUT"
 
           mkdir -p release_files

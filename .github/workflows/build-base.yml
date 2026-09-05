@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'ImmortalWrt 版本：X.Y.Z / X.Y-SNAPSHOT / master / all'
+        description: '版本：24.10 / 25.12（系列矩阵）/ X.Y.Z / X.Y-SNAPSHOT / master / all'
         type: string
         required: true
         default: master

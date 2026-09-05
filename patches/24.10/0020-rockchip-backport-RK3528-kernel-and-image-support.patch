@@ -6338,10 +6338,10 @@ index 0000000000..dded1edcd2
 + };
 diff --git a/target/linux/rockchip/patches-6.6/045-02-phy-inno-usb2-clkout_ctl_phy.patch b/target/linux/rockchip/patches-6.6/045-02-phy-inno-usb2-clkout_ctl_phy.patch
 new file mode 100644
-index 0000000000..9b9c77b34f
+index 0000000000..79d2b0204e
 --- /dev/null
 +++ b/target/linux/rockchip/patches-6.6/045-02-phy-inno-usb2-clkout_ctl_phy.patch
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,131 @@
 +Subject: [PATCH] phy: rockchip: inno-usb2: Add clkout_ctl_phy support
 +
 +The 480m clk is controlled using regs in the PHY address space and not
@@ -6354,8 +6354,8 @@ index 0000000000..9b9c77b34f
 +applies across all 24.10.x kernel point releases.
 +
 +---
-+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c	2026-09-05 12:29:21.906642100 +0800
-++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c	2026-09-05 12:58:57.017895100 +0800
++--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c	2026-09-05 14:38:08.642211100 +0800
+++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c	2026-09-05 14:38:40.760210300 +0800
 +@@ -175,6 +175,7 @@
 + 	unsigned int	num_ports;
 + 	int (*phy_tuning)(struct rockchip_usb2phy *rphy);
@@ -6384,12 +6384,14 @@ index 0000000000..9b9c77b34f
 + 	return 0;
 + }
 + 
++-static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
 ++static void
 ++rockchip_usb2phy_clk480m_clkout_ctl(struct clk_hw *hw, struct regmap **base,
 ++				    const struct usb2phy_reg **clkout_ctl)
-++{
-++	struct rockchip_usb2phy *rphy =
-++		container_of(hw, struct rockchip_usb2phy, clk480m_hw);
++ {
++ 	struct rockchip_usb2phy *rphy =
++ 		container_of(hw, struct rockchip_usb2phy, clk480m_hw);
++-	struct regmap *base = get_reg_base(rphy);
 ++
 ++	if (rphy->phy_cfg->clkout_ctl_phy.enable) {
 ++		*base = rphy->phy_base;
@@ -6400,11 +6402,10 @@ index 0000000000..9b9c77b34f
 ++	}
 ++}
 ++
-+ static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
-+ {
-+ 	struct rockchip_usb2phy *rphy =
-+ 		container_of(hw, struct rockchip_usb2phy, clk480m_hw);
-+-	struct regmap *base = get_reg_base(rphy);
+++static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
+++{
+++	const struct usb2phy_reg *clkout_ctl;
+++	struct regmap *base;
 + 	int ret;
 + 
 ++	rockchip_usb2phy_clk480m_clkout_ctl(hw, &base, &clkout_ctl);

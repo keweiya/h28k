@@ -68,6 +68,8 @@ jobs:
         version: ${{ fromJSON(needs.matrix.outputs.versions) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    env:
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: 检出支持仓库
@@ -135,6 +137,15 @@ jobs:
           key: h28k-dl-${{ steps.release.outputs.series }}-${{ steps.release.outputs.version }}
           restore-keys: |
             h28k-dl-${{ steps.release.outputs.series }}-
+
+      - name: 恢复 ccache 编译缓存（官方 buildbot 同款机制）
+        uses: actions/cache@v4
+        with:
+          path: source/.ccache
+          key: h28k-ccache-${{ steps.release.outputs.version }}-${{ github.run_id }}
+          restore-keys: |
+            h28k-ccache-${{ steps.release.outputs.version }}-
+            h28k-ccache-
 
       - name: 应用 HINLINK H28K 补丁
         working-directory: source

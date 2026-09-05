@@ -253,6 +253,10 @@ jobs:
           IB_STAGE=$(mktemp -d)
           tar --zstd -xf "$IB_TARBALL" -C "$IB_STAGE"
           IB_TOP=$(find "$IB_STAGE" -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -n1)
+          # 设备专属 kmod 一并捆绑进 IB：官方 kmods 仓库可能缺少个别 kmod
+          # （如 24.10.1 缺 kmod-input-adc-keys），本地捆绑保证组装可用
+          [ -d bin/targets/rockchip/armv8/packages ] &&
+            cp -f bin/targets/rockchip/armv8/packages/* "$IB_TOP/packages/" || true
           if [ ! -f "$IB_TOP/repositories" ]; then
             bash "$GITHUB_WORKSPACE/scripts/ensure_ib_repositories.sh" "$IB_TOP" "${{ steps.release.outputs.version }}"
             # 压缩参数与上游打包一致（zstd -T0 --ultra -20），避免默认级别导致附件体积膨胀

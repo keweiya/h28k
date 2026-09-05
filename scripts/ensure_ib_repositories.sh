@@ -36,7 +36,10 @@ kernel_hash="$(printf '%s' "$kernel_name" | sed -nE 's/.*~([0-9a-f]{32})-.*/\1/p
 [[ -n "$arch" && -n "$kernel_ver" && -n "$kernel_hash" ]] ||
   fail "无法从 IB 元数据解析 arch/内核版本/vermagic（$arch / $kernel_ver / $kernel_hash）"
 
-base_url="https://downloads.immortalwrt.org/releases/$ib_version"
+case "$ib_version" in
+  master) base_url="https://downloads.immortalwrt.org/snapshots" ;;
+  *)      base_url="https://downloads.immortalwrt.org/releases/$ib_version" ;;
+esac
 kmods_dir="$(curl -fsSL --retry 2 "$base_url/targets/rockchip/armv8/kmods/" 2>/dev/null |
   sed -nE "s#.*href=\"([^\"]*-$kernel_hash)/\".*#\1#p" | head -n1)" || kmods_dir=""
 

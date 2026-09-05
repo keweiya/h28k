@@ -4,16 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '目标 ImmortalWrt 版本'
+        description: '目标版本（all = 全部支持版本的矩阵）'
         type: choice
         required: true
-        default: 25.12.1
         options:
           - all
+          - 24.10
+          - 25.12
+          - master
+          - 24.10-SNAPSHOT
+          - 25.12-SNAPSHOT
           - 25.12.1
           - 25.12.0
           - 24.10.6
           - 24.10.5
+          - 24.10.4
+          - 24.10.3
+          - 24.10.2
+          - 24.10.1
       publish_release:
         description: '发布插件包为 Release'
         type: boolean
@@ -57,6 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       versions: ${{ steps.resolve.outputs.versions }}
+      latest: ${{ steps.resolve.outputs.latest }}
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
@@ -188,10 +197,14 @@ jobs:
             echo "没有收集到任何插件包"
             exit 1
           fi
+          # 正式版沿用 vX.Y.Z 命名，滚动快照（master / X.Y-SNAPSHOT）用原样字符串
           V="${{ matrix.version }}"
-          PKG_NAME="immortalwrt-v${V}-h28k-packages.tar.gz"
+          case "$V" in master|*-SNAPSHOT) ;; *) V="v$V" ;; esac
+          PKG_NAME="immortalwrt-${V}-h28k-packages.tar.gz"
           tar -czf "$PKG_NAME" -C stage .
           echo "PKG_FILE=$PKG_NAME" >> "$GITHUB_ENV"
+          echo "PKG_TAG=immortalwrt-h28k-packages-$V" >> "$GITHUB_ENV"
+          echo "PKG_VERSION_SUFFIX=$V" >> "$GITHUB_ENV"
           ls -lh "$PKG_NAME"
 
       - name: 上传插件包构件
@@ -207,12 +220,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="immortalwrt-h28k-packages-v${{ matrix.version }}"
-          TITLE="ImmortalWrt H28K 插件包 v${{ matrix.version }}"
-          NOTES="## ImmortalWrt H28K 插件包 v${{ matrix.version }}
+          TAG="${{ env.PKG_TAG }}"
+          TITLE="ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}"
+          NOTES="## ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}
 
           - **组件类型**：源码插件独立编译包（供组装定制固件注入）
-          - **基于底包**：ImmortalWrt ${{ steps.release.outputs.tag }}
+          - **基于底包**：ImmortalWrt ${{ steps.release.outputs.revision }}
           - **已包含插件**：$(cat sdk/plugin-names.txt | tr '\n' ' ')
           - **附件内容**：\`${{ env.PKG_FILE }}\`（解压包含全部预编译 .ipk / .apk 及依赖）"
 
@@ -257,17 +270,17 @@ jobs:
         if: inputs.build_firmware
         run: |
           mkdir -p custom_release_files
-          V="${{ matrix.version }}"
+          V="${{ steps.base.outputs.rel_suffix }}"
           rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
 
           for f in out/*ext4-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-v${V}-h28k-custom-ext4-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz"
           done
           for f in out/*squashfs-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-v${V}-h28k-custom-squashfs-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz"
           done
           for f in out/*rootfs.tar.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-v${V}-h28k-custom-rootfs.tar.gz"
+            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-rootfs.tar.gz"
           done
 
       - name: 发布定制固件 Release（同步至 Custom Release）
@@ -275,20 +288,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="immortalwrt-h28k-custom-v${{ matrix.version }}"
+          V="${{ steps.base.outputs.rel_suffix }}"
+          TAG="immortalwrt-h28k-custom-$V"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
-          TITLE="ImmortalWrt H28K 定制固件 v${{ matrix.version }}"
-          NOTES="## ImmortalWrt H28K 定制固件 v${{ matrix.version }}
+          TITLE="ImmortalWrt H28K 定制固件 $V"
+          NOTES="## ImmortalWrt H28K 定制固件 $V
 
           - **构建类型**：插件编译后自动组装定制包
           - **组装时间**：$BUILD_TIME
-          - **基于底包**：ImmortalWrt v${{ matrix.version }}
+          - **基于底包**：ImmortalWrt ${{ matrix.version }}
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           - **默认密码**：\`${{ inputs.password }}\`
           - **包含附件**：
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-rootfs.tar.gz\`"
+            - \`immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-h28k-custom-rootfs.tar.gz\`"
 
           shopt -s nullglob
           FILES=(custom_release_files/*)

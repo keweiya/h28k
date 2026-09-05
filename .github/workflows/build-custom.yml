@@ -4,16 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '基于哪个版本的固件组装'
+        description: '基于哪个版本的固件组装（all = 全部支持版本的组装矩阵）'
         type: choice
         required: true
-        default: 25.12.1
         options:
           - all
+          - 24.10
+          - 25.12
+          - master
+          - 24.10-SNAPSHOT
+          - 25.12-SNAPSHOT
           - 25.12.1
           - 25.12.0
           - 24.10.6
           - 24.10.5
+          - 24.10.4
+          - 24.10.3
+          - 24.10.2
+          - 24.10.1
       lan_ip:
         description: 'LAN 管理地址'
         type: string
@@ -47,6 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       versions: ${{ steps.resolve.outputs.versions }}
+      latest: ${{ steps.resolve.outputs.latest }}
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
@@ -110,20 +119,20 @@ jobs:
       - name: 整理并重命名定制产物（剔除重复包，增加 custom 与版本号）
         run: |
           mkdir -p release_files
-          V="${{ matrix.version }}"
+          V="${{ steps.base.outputs.rel_suffix }}"
 
           # 剔除无用的 targz-sysupgrade 重复包
           rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
 
-          # 拷贝并规范化重命名（统一加 v）
+          # 拷贝并规范化重命名
           for f in out/*ext4-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-ext4-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz"
           done
           for f in out/*squashfs-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-squashfs-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz"
           done
           for f in out/*rootfs.tar.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-v${V}-h28k-custom-rootfs.tar.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-rootfs.tar.gz"
           done
 
           echo "=== 定制待发布文件列表 ==="
@@ -203,14 +212,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="immortalwrt-h28k-custom-v${{ matrix.version }}"
+          V="${{ steps.base.outputs.rel_suffix }}"
+          TAG="immortalwrt-h28k-custom-$V"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
-          TITLE="ImmortalWrt H28K 定制固件 v${{ matrix.version }}"
-          NOTES="## ImmortalWrt H28K 定制固件 v${{ matrix.version }}
+          TITLE="ImmortalWrt H28K 定制固件 $V"
+          NOTES="## ImmortalWrt H28K 定制固件 $V
 
           - **构建类型**：ImageBuilder 组装（开箱即用定制版）
           - **组装时间**：$BUILD_TIME
-          - **基于底包**：ImmortalWrt v${{ matrix.version }}
+          - **基于底包**：ImmortalWrt ${{ matrix.version }}
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           - **默认密码**：\`${{ inputs.password }}\`
@@ -219,9 +229,9 @@ jobs:
           ${{ env.MISSING_LINE }}
           ${{ env.FAILED_LINE }}
           - **包含附件**：
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-v${{ matrix.version }}-h28k-custom-rootfs.tar.gz\`"
+            - \`immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-h28k-custom-rootfs.tar.gz\`"
 
           shopt -s nullglob
           FILES=(release_files/*)
@@ -234,7 +244,8 @@ jobs:
           # 与附件全部对齐本次组装（页面上不再有新旧错位）
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin :refs/tags/"$TAG" 2>/dev/null || true
-          if [[ "${{ matrix.version }}" == "25.12.1" ]]; then
+          # latest 只给默认集合中最新的正式版；滚动快照与旧版本不抢占
+          if [[ "${{ matrix.version }}" == "${{ needs.matrix.outputs.latest }}" ]]; then
             gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest
           else
             gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false

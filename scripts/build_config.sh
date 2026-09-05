@@ -33,11 +33,18 @@ enable_official_kmods() {
 }
 
 prepare() {
-  local source_dir="$1" config_file="$2" github_env="$3"
+  local source_dir="$1" config_file="$2" github_env="$3" kind="${4:-release}"
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
   apply_device_config "$source_dir" "$lan_ip" "$password" "$default_theme"
-  [[ "$check_official_abi" == true ]] && enable_official_kmods "$source_dir"
+  # 官方 kmods 全量构建（CONFIG_ALL_KMODS）仅为与官方源 ABI 对齐服务：
+  # 正式版必需；滚动快照不做 ABI 校验，跳过后可避免与快照内核不兼容的
+  # feed kmod（如 telephony 的 rtpengine 在 6.18 上编译失败）拖垮构建
+  if [[ "$check_official_abi" == true && "$kind" != "snapshot" ]]; then
+    enable_official_kmods "$source_dir"
+  elif [[ "$kind" == "snapshot" ]]; then
+    echo "滚动快照：跳过 CONFIG_ALL_KMODS 全量 kmod 构建（仅构建固件所需的 kmod）"
+  fi
   printf 'FIRMWARE_LAN_IP=%s\nFIRMWARE_PASSWORD=%s\n' "$lan_ip" "$password" >> "$github_env"
 }
 
@@ -55,14 +62,20 @@ check_abi() {
   [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
   load_firmware_config "$config_file"
   [[ "$check_official_abi" == true ]] || { echo "Official ABI check skipped"; return; }
+  # 三种形态全部强制校验：滚动快照锁定的源码 revision 正是官方当前产物所编译
+  # 的 commit，配置合成一致（CLK_RK3528 已排除），产物哈希应与解析时刻的
+  # 官方哈希完全相同；官方后续轮换不影响本次比对的有效性
   [[ "$kernel_kmods" =~ -[0-9a-f]{32}$ ]] || fail "invalid kmods directory: $kernel_kmods"
 
   built_abi="$(read_built_abi "$source_dir")"
   echo "release=$tag"
   echo "built_abi=$built_abi"
   echo "official_abi=$official_abi"
-  [[ "$built_abi" == "$official_abi" ]] ||
-    fail "kernel ABI does not match official release $version"
+  if [[ "$built_abi" != "$official_abi" ]]; then
+    echo "kernel ABI does not match official $version" >&2
+    echo "hint: 滚动快照若因此失败，官方可能刚发布了配置有变化的快照，重跑工作流即可" >&2
+    exit 1
+  fi
 }
 
 # 解析源码插件清单（config/source-plugins.list）：
@@ -95,8 +108,8 @@ run_source_plugins() {
 
 case "${1:-}" in
   prepare)
-    [[ $# -eq 4 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env>"
-    prepare "$2" "$3" "$4"
+    [[ $# -eq 4 || $# -eq 5 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env> [kind]"
+    prepare "$2" "$3" "$4" "${5:-release}"
     ;;
   source-plugins)
     [[ $# -eq 3 ]] || fail "usage: $0 source-plugins <sdk-dir> <source-plugins.list>"

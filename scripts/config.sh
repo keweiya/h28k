@@ -21,6 +21,67 @@ version_in_list() {
   return 1
 }
 
+# 判断版本是否在排除名单内（excluded_versions；all 枚举时跳过）。
+# 调用前必须已经执行过 load_firmware_config。
+version_excluded() {
+  local needle="$1" item
+  for item in "${excluded_versions[@]}"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# 判断系列是否允许构建（supported_series；master 滚动快照始终允许）。
+# 调用前必须已经执行过 load_firmware_config。
+series_supported() {
+  local needle="$1" item
+  [[ "$needle" == "master" ]] && return 0
+  for item in "${supported_series[@]}"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# 版本形态：
+#   X.Y.Z        正式 release（源码锁 tag vX.Y.Z，官方源 releases/X.Y.Z/）
+#   X.Y-SNAPSHOT 分支滚动快照（源码锁 openwrt-X.Y 分支 revision，官方源 releases/X.Y-SNAPSHOT/）
+#   master       master 滚动快照（源码锁 master 分支 revision，官方源 snapshots/）
+# 输出 release / snapshot / invalid。
+version_kind() {
+  local v="$1"
+  case "$v" in
+    master) printf 'snapshot\n' ;;
+    *)
+      if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        printf 'release\n'
+      elif [[ "$v" =~ ^[0-9]+\.[0-9]+-SNAPSHOT$ ]]; then
+        printf 'snapshot\n'
+      else
+        printf 'invalid\n'
+      fi
+      ;;
+  esac
+}
+
+# 版本所属系列（决定补丁目录 patches/<series> 与系列特例逻辑）：
+# X.Y.Z 与 X.Y-SNAPSHOT 都归入 X.Y，master 归入 master。
+version_series() {
+  local v="$1"
+  case "$v" in
+    master) printf 'master\n' ;;
+    *-SNAPSHOT) printf '%s\n' "${v%-SNAPSHOT}" ;;
+    *) printf '%s\n' "${v%.*}" ;;
+  esac
+}
+
+# 产物 / Release tag 命名后缀：正式版沿用 vX.Y.Z，滚动快照用原样字符串。
+rel_suffix_of() {
+  case "$1" in
+    master|*-SNAPSHOT) printf '%s\n' "$1" ;;
+    *) printf 'v%s\n' "$1" ;;
+  esac
+}
+
 load_firmware_config() {
   local file="$1" key value octet
   local -a octets
@@ -28,6 +89,8 @@ load_firmware_config() {
 
   default_series=""
   supported_versions=()
+  supported_series=()
+  excluded_versions=()
   lan_ip=""
   password=""
   rootfs_size=""
@@ -43,6 +106,8 @@ load_firmware_config() {
     fi
     case "$key" in
       supported_versions) read -r -a supported_versions <<< "$value" ;;
+      supported_series) read -r -a supported_series <<< "$value" ;;
+      excluded_versions) read -r -a excluded_versions <<< "$value" ;;
       lan_ip) lan_ip="$value" ;;
       password) password="$value" ;;
       rootfs_size) rootfs_size="$value" ;;
@@ -52,11 +117,23 @@ load_firmware_config() {
     esac
   done < "$file"
 
-  # 已测试版本白名单：ABI 与补丁仅对这些版本验证过，构建必须从中选择
+  # supported_versions：默认构建集合（工作流选 all 时展开的版本列表）
   (( ${#supported_versions[@]} >= 1 )) || fail "supported_versions must not be empty"
   local v
   for v in "${supported_versions[@]}"; do
-    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid supported version: $v"
+    [[ "$(version_kind "$v")" != "invalid" ]] ||
+      fail "invalid supported version: $v（支持 X.Y.Z / X.Y-SNAPSHOT / master）"
+  done
+  # supported_series：允许构建的系列（具体版本与 X.Y-SNAPSHOT 按系列放行，master 始终允许）
+  (( ${#supported_series[@]} >= 1 )) || fail "supported_series must not be empty"
+  local s
+  for s in "${supported_series[@]}"; do
+    [[ "$s" =~ ^[0-9]+\.[0-9]+$ ]] || fail "invalid supported series: $s"
+  done
+  # excluded_versions：系列内明确不支持、all 枚举时排除的版本（如 24.10.0 无 phy-leds）
+  local e
+  for e in "${excluded_versions[@]}"; do
+    [[ "$e" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid excluded version: $e"
   done
 
   # 工作流输入覆盖（环境变量，留空 = 使用 conf 默认值）

@@ -16,13 +16,20 @@ version="${1:-}"
 github_output="${2:-}"
 [[ -n "$version" && -n "$github_output" ]] ||
   fail "usage: $0 <version> <github-output>"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  fail "invalid version: $version"
+case "$version" in
+  master|*-SNAPSHOT|[0-9]*.[0-9]*.[0-9]*) ;;
+  *) fail "invalid version: $version（支持 X.Y.Z / X.Y-SNAPSHOT / master）" ;;
+esac
+rel_suffix="$version"
+case "$version" in
+  master|*-SNAPSHOT) ;;
+  *) rel_suffix="v$version" ;;
+esac
 
-base_tag="immortalwrt-h28k-base-v$version"
-ib_name="immortalwrt-v${version}-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
-ib_prefix="immortalwrt-v${version}-h28k-base-imagebuilder-"
-pkg_name="immortalwrt-v${version}-h28k-packages.tar.gz"
+base_tag="immortalwrt-h28k-base-$rel_suffix"
+ib_name="immortalwrt-${rel_suffix}-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
+ib_prefix="immortalwrt-${rel_suffix}-h28k-base-imagebuilder-"
+pkg_name="immortalwrt-${rel_suffix}-h28k-packages.tar.gz"
 
 # 1) Release 是否存在：失败时如实打印 gh 的真实报错，不再吞成同一句话
 api_err="$(gh api "repos/{owner}/{repo}/releases/tags/$base_tag" 2>&1 >/dev/null)" || true
@@ -42,7 +49,7 @@ if [[ -z "$ib_url" ]]; then
 fi
 
 # 3) 插件包附件（独立 Packages Release，可能尚未发布）：没有时留空（组装纯官方固件）
-pkg_urls="$(gh api "repos/{owner}/{repo}/releases/tags/immortalwrt-h28k-packages-v$version" --jq \
+pkg_urls="$(gh api "repos/{owner}/{repo}/releases/tags/immortalwrt-h28k-packages-$rel_suffix" --jq \
   '.assets[] | select(.name == "'"${pkg_name}"'") | .browser_download_url' \
   2>/dev/null)" || pkg_urls=""
 pkg_url="${pkg_urls%%$'\n'*}"
@@ -54,6 +61,7 @@ fi
   echo "tag=$base_tag"
   echo "url=$ib_url"
   echo "version=$version"
+  echo "rel_suffix=$rel_suffix"
   echo "packages_url=$pkg_url"
 } >> "$github_output"
 

@@ -338,8 +338,8 @@ jobs:
           - **包含附件**：
             - \`immortalwrt-${V}-h28k-base-ext4-sysupgrade.img.gz\`
             - \`immortalwrt-${V}-h28k-base-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-h28k-base-rootfs.tar.gz\` (LXC 容器用)
-            - \`immortalwrt-${V}-h28k-base-imagebuilder-rockchip-armv8.tar.zst\` (内核 ABI 一致的自建 ImageBuilder)
+            - \`immortalwrt-${V}-h28k-base-rootfs.tar.gz\`
+            - \`immortalwrt-${V}-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`
 
           *日常使用建议下载带有 \`-custom\` 标识的定制固件。*"
 

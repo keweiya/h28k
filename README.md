@@ -6,14 +6,14 @@
 
 > 仅供个人使用和配置留档，请自行确认硬件适配性。
 
-> **分支说明**：`master` 分支只构建实测过的固定版本；本分支（`adapt`）扩展支持 ImmortalWrt 官方全部已发布版本（24.10.1+ / 25.12.x）、`X.Y-SNAPSHOT` 分支滚动快照和 `master` 滚动快照。稳定后可合并回 `master`。
+> **分支说明**：全部能力（全版本支持 / 滚动快照 / 补丁体系）已合并进 `master` 分支并直接在 master 上维护；原 `adapt` 开发分支不再使用。
 
 ## 支持版本
 
 | ImmortalWrt 版本形态 | 补丁目录 | 内容 | 已实测版本 |
 | --- | --- | --- | --- |
-| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/`（`.24.10` 后缀） | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个补丁 | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
-| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT）与 master | `patches/`（`.25.12` 后缀，master 自动映射） | U-Boot + H28K 板级支持，共 2 个补丁 | 25.12.0, 25.12.1, openwrt-25.12 分支 HEAD 与当前官方快照 revision |
+| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/`（`-v24.10` 后缀） | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个系列补丁；24.10.1/2/3 另有 `0050` 版本级补丁回填 adc-keys kmod | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
+| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT）与 master | `patches/`（`-v25.12` 后缀；master 沿用并叠加 `-vmaster` 专属补丁） | U-Boot + H28K 板级支持，共 2 个系列补丁；master 另有 `0040` 专属补丁恢复 SARADC kmod 定义 | 25.12.0, 25.12.1, openwrt-25.12 分支 HEAD 与当前官方快照 revision |
 
 - **三种版本形态**：
   - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
@@ -22,11 +22,12 @@
 - **滚动快照同样强制校验 ABI**：源码锁 revision（官方当前产物所编译的 commit）+ 配置合成一致，产物哈希与解析时刻的官方哈希比对；官方轮换后重跑即可。正式版保持全量 kmod（ALL_KMODS）与官方对齐。
 - **编译统一带 `IGNORE_ERRORS="n m"`**（官方 buildbot 同款，语义见 `package/Makefile`：忽略未选中包 n 与模块包 m 的编译失败，例如 telephony 的 rtpengine 遇上 6.18 内核）。与官方发布版（`n m y`）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包。
 - **ccache 跨构建缓存**（官方 buildbot 同款机制）：`CONFIG_CCACHE=y` + `actions/cache` 持久化 `source/.ccache`（`CCACHE_MAXSIZE=2G`）。同版本重跑、失败重试、官方快照轮换后的重新构建都会命中编译缓存，工具链与内核部分提速最明显；缓存为纯编译加速，不影响 ABI。
-- 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0050` 补丁的前提）。
+- 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0030` 板级补丁的前提）。
 - 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
 - 工作流版本选 `all` 时在线枚举官方源的全部支持版本：各系列的已发布 X.Y.Z 与 X.Y-SNAPSHOT（排除 `excluded_versions`，如 24.10.0）加 master，官方新发布的点版本自动纳入、无需改配置；枚举失败时回退到 `supported_versions` 静态列表并告警。
 - 内核版本跟随官方对应版本（24.10 系为 6.6.x，25.12 系为 6.12.x，master 当前为 6.18.x，以官方实际发布为准）。
-- 补丁位于单层 `patches/` 目录，命名 `<序号>-<功能>.<系列>.patch`：序号决定应用顺序（`git apply --3way`），后缀决定适用系列（`master` 构建自动映射到 `.25.12`），未匹配与后缀无法识别的补丁会在应用阶段直接报错。
+- 补丁位于单层 `patches/` 目录，命名 `<序号>-<功能>-v<范围>.patch`：序号决定应用顺序，后缀决定适用范围——`-v<系列>`（如 `-v24.10`）适配该系列全部版本，`-v<精确版本>`（如 `-v24.10.1`）仅适配该点版本，`-vmaster` 仅适配 master（master 源码树沿用 25.12 系列补丁并叠加专属补丁）。无法识别的后缀直接报错，防止补丁被静默跳过。
+- **设备配方 kmod 的上游差量由补丁回填**：`kmod-input-adc-keys` 上游 v24.10.4 才加入 24.10 分支（24.10.1/2/3 由 `0050` 版本级补丁回填），`kmod-saradc-rockchip` 在 master 分支被上游删除（由 `0040` 补丁恢复）。回填后 base 构建自动产出并捆绑进 IB，组装阶段设备配方零剔除；新增符号从 vermagic 哈希排除以保持与官方 ABI 对齐（见下节）。对应版本的底包需在补丁合入后重建一次。
 - 每次构建强制校验 ABI，见下文"ABI 保证机制"。
 
 ## ABI 保证机制
@@ -35,7 +36,7 @@
 
 1. 源码锁定官方版本：正式版锁 release tag；滚动快照锁官方已发布产物对应的 revision（`scripts/select_release.sh` 自动解析，并确认官方 kmods 目录存在）。
 2. feeds 用官方 `feeds.buildinfo` 锁定提交；内核配置用官方 `config.buildinfo` 中的内核选项合成（`scripts/prepare_kernel_config.sh`）。
-3. 24.10 系特例：计算 vermagic 时排除 `CONFIG_CLK_RK3528=y`——官方 6.6 内核没有此选项，H28K 补丁新增的时钟选项必须从 ABI 哈希中剔除，否则与官方 kmods 不一致。
+3. 24.10 系特例：计算 vermagic 时排除官方没有的差量符号——所有 24.10.x 排除 `CONFIG_CLK_RK3528=y`（H28K 补丁新增的时钟选项）；24.10.1/2/3 另排除 `CONFIG_KEYBOARD_ADC=m`（该 kmod 由 `0050` 补丁回填、官方这些版本未启用）。纯新增模块不改动核心内核代码，官方远程 kmod 仍可直接安装。
 4. 编译后强校验：构建出的 `.vermagic` 必须等于官方 kmods 目录哈希，不一致则构建直接失败。
 
 ## 使用
@@ -62,13 +63,13 @@
   → 基础固件 + 用 ImageBuilder 组装的定制固件（预装 ib-packages.list 插件）
   → 同发布到一个 Release（tag = immortalwrt-h28k-<版本>，默认 2G 根目录）
 
-每个版本最多三个 Release（base / packages / custom），重复构建原地覆盖更新，不会堆积；全部工作流均为手动触发。日常使用请下载带 -custom 标识的定制固件。
+每个版本最多三个 Release（base / packages / custom），重复构建原地覆盖更新，不会堆积；除周更为定时触发外，其余工作流均可手动触发。日常使用请下载带 -custom 标识的定制固件。
 ```
 
-- **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会自动补写 `repositories` 在线源清单（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成），IB 本地没有的包组装时从官方源在线拉取。
+- **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会补写 `repositories` 在线源清单并解除 standalone 门禁（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成也不加载），IB 本地没有的包组装时从官方源在线拉取；设备专属 kmod 随构建捆绑进 IB，官方 kmods 仓库缺的包也能本地安装，源清单里失效的 kmods 目录会在组装前自动重解析。
 - **插件包**：Actions → 「H28K 插件包构建」→ 选版本。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟），也可勾选"立即组装固件"一步出固件。
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。
-- **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`）；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
+- **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 
@@ -82,21 +83,26 @@ h28k-openwrt/
 │   ├── source-plugins.list          # 源码插件清单（唯一插件入口，默认全注释保持纯净）
 │   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
-├── patches/                         # 单层目录；命名 <序号>-<功能>.<系列>.patch（序号=应用顺序，后缀=适用系列）
-│   ├── 0010-bootloader.24.10.patch  # 24.10：ATF rkbin + 独立 U-Boot 2025.10
-│   ├── 0010-bootloader.25.12.patch  # 25.12/master：uboot-rockchip 增加 H28K
-│   ├── 0020-kernel-backport.24.10.patch # 24.10：RK3528 内核回移
-│   ├── 0030-board-support.24.10.patch    # 24.10：H28K 板级支持（DT/默认配置/镜像/LED）
-│   └── 0030-board-support.25.12.patch    # 25.12/master：H28K 板级支持
+├── patches/                         # 单层目录；命名 <序号>-<功能>-v<系列|精确版本|master>.patch
+│   ├── 0010-bootloader-v24.10.patch       # 24.10：ATF rkbin + 独立 U-Boot 2025.10
+│   ├── 0010-bootloader-v25.12.patch       # 25.12/master：uboot-rockchip 增加 H28K
+│   ├── 0020-kernel-backport-v24.10.patch  # 24.10：RK3528 内核回移
+│   ├── 0030-board-support-v24.10.patch    # 24.10：H28K 板级支持（DT/默认配置/镜像/LED）
+│   ├── 0030-board-support-v25.12.patch    # 25.12/master：H28K 板级支持
+│   ├── 0040-kmod-saradc-rockchip-vmaster.patch  # master 专属：恢复上游删除的 SARADC kmod 定义
+│   └── 0050-kmod-input-adc-keys-v24.10.1/2/3.patch  # 仅这三个点版本：回填上游 v24.10.4 才加入的 adc-keys kmod 定义
 ├── scripts/
-│   ├── config.sh                    # 共享配置读取与校验（版本白名单、参数覆盖）
-│   ├── select_release.sh            # 从已测试版本白名单解析版本 + 官方 kmods 哈希
+│   ├── config.sh                    # 共享配置读取与校验（版本形态、参数覆盖）
+│   ├── resolve_versions.sh          # 版本选择 → 构建矩阵（all 在线枚举官方全部支持版本）
+│   ├── select_release.sh            # 版本解析：源码锁定（tag/revision）+ 补丁系列映射 + 官方 kmods 哈希
 │   ├── select_sdk.sh                # 解析官方 SDK 下载地址
 │   ├── select_ib.sh                 # 选基础 Release（IB 附件 + 匹配版本的插件包附件）
-│   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小）
-│   ├── apply_patches.sh             # 按系列后缀过滤并按字典序应用补丁
-│   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + 24.10 vermagic 排除
-│   └── build_config.sh              # 参数注入、源码包克隆、官方 kmod 源启用、ABI 校验
+│   ├── ensure_ib_repositories.sh    # IB 在线源清单补写 + standalone 门禁解除 + kmods 源自愈
+│   ├── fetch_official_packages.sh   # 生成 ib-packages.list（在线枚举官方插件源包清单）
+│   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小/缺包自动剔除）
+│   ├── apply_patches.sh             # 按系列/精确版本后缀过滤并按字典序应用补丁
+│   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + vermagic 差量符号排除
+│   └── build_config.sh              # 参数注入、源码插件克隆、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
     ├── build-weekly.yml             # 周更：周四 02:00 定时编译 master + 双快照（基础+定制 同 Release）
     ├── build-base.yml               # 阶段 1：全量源码构建（单版本或 all 并行）→ Base Release

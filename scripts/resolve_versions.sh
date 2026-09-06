@@ -24,8 +24,16 @@ DL_BASE="https://downloads.immortalwrt.org"
 # 的 X.Y.Z 与 X.Y-SNAPSHOT（不含 master）
 enumerate_official_versions() {
   local filter="${1:-}" listing series
-  listing="$(curl -fsSL --retry 3 --max-time 60 "$DL_BASE/releases/")" ||
-    fail "无法访问官方源 $DL_BASE/releases/（在线枚举失败）"
+  # 注意：本函数在 < <(...) 进程替换子 shell 里运行，这里不能 exit（fail 会
+  # 静默终止子 shell 而主流程无感知地走兜底），统一用 warning + 非零返回表达
+  listing="$(curl -fsSL --retry 3 --max-time 60 "$DL_BASE/releases/" 2>/dev/null)" || {
+    echo "::warning::无法访问官方源 $DL_BASE/releases/（在线枚举失败），将回退到静态列表" >&2
+    return 1
+  }
+  [[ -n "$listing" ]] || {
+    echo "::warning::官方源 releases/ 页面解析为空，将回退到静态列表" >&2
+    return 1
+  }
   {
     for series in "${supported_series[@]}"; do
       if [[ -n "$filter" && "$series" != "$filter" ]]; then

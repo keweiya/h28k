@@ -13,6 +13,9 @@
 # release 的清单模板生成（25.12 系已验证与官方逐字节一致）：
 #   - arch 取自 IB .config 的 CONFIG_TARGET_ARCH_PACKAGES；
 #   - kmods 目录按 IB 内核包的 vermagic 从官方 kmods 索引解析。
+# 滚动源（snapshots / X.Y-SNAPSHOT）会随内核升级删除旧 kmods 目录：组装时
+# 对既有清单里的 kmods 行做可达性校验，404 则按当前 vermagic 重解析，官方
+# 已无匹配目录时移除该行（本地捆绑 kmod 仍满足默认组装）。
 # 用法：ensure_ib_repositories.sh <已解包的 IB 目录> <版本号>
 #   - 25.12/master（apk）系：补写 repositories + 关闭 IB_STANDALONE；
 #   - 24.10（opkg）系：在既有 repositories.conf 前部插入官方远程源
@@ -29,6 +32,79 @@ ib_version="${2:-}"
 [[ -d "$ib_dir" ]] || fail "IB directory not found: $ib_dir"
 cd "$ib_dir"
 
+case "$ib_version" in
+  master) base_url="https://downloads.immortalwrt.org/snapshots" ;;
+  *)      base_url="https://downloads.immortalwrt.org/releases/$ib_version" ;;
+esac
+
+# 从 IB 元数据解析 arch/内核版本/vermagic，结果写入全局变量；
+# 解析失败返回 1（组装早退路径降级处理，补写路径视为致命）
+parse_ib_metadata() {
+  arch="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config 2>/dev/null | head -n1)"
+  kernel_name="$(basename "$(find packages -maxdepth 1 \( -name 'kernel-*.apk' -o -name 'kernel-*.ipk' -o -name 'kernel_*.ipk' \) 2>/dev/null | head -n1)")"
+  kernel_ver="$(printf '%s' "$kernel_name" | sed -nE 's/^kernel[-_]([0-9][0-9.]*)~.*/\1/p')"
+  kernel_hash="$(printf '%s' "$kernel_name" | sed -nE 's/.*~([0-9a-f]{32})-.*/\1/p')"
+  [[ -n "$arch" && -n "$kernel_ver" && -n "$kernel_hash" ]]
+}
+
+# 按内核 vermagic 从官方 kmods 索引解析目录名；找不到或拉取失败返回 1。
+# 先完整捕获再取首行：管道接 head 会在 pipefail 下触发 SIGPIPE，可能把
+# 已捕获的结果误判为失败
+resolve_kmods_dir() {
+  local listing dirs
+  listing="$(curl -fsSL --retry 2 --max-time 60 "$base_url/targets/rockchip/armv8/kmods/" 2>/dev/null)" || return 1
+  dirs="$(printf '%s\n' "$listing" | sed -nE "s#.*href=\"([^\"]*-$kernel_hash)/\".*#\1#p")"
+  dirs="${dirs%%$'\n'*}"
+  [[ -n "$dirs" ]] || return 1
+  printf '%s\n' "$dirs"
+}
+
+# apk 系：校验 repositories 里的 kmods 行，失效则重解析或移除（幂等）
+heal_apk_kmods_line() {
+  local lines line new_dir
+  lines="$(grep -E '^https?://.*/kmods/' repositories 2>/dev/null || true)"
+  line="${lines%%$'\n'*}"
+  [[ -n "$line" ]] || return 0
+  if curl -fsSI --retry 2 --max-time 30 "$line" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "⚠️ kmods 在线源不可达（官方可能已轮换）：$line" >&2
+  if ! parse_ib_metadata; then
+    echo "⚠️ 无法从 IB 元数据解析 vermagic，保留原 kmods 行（仅影响额外 kmod 在线安装）" >&2
+    return 0
+  fi
+  if new_dir="$(resolve_kmods_dir)"; then
+    sed -i "s#${line}#${base_url}/targets/rockchip/armv8/kmods/${new_dir}/packages.adb#" repositories
+    echo "=== kmods 在线源已重解析为 $new_dir ==="
+  else
+    sed -i "\#${line}#d" repositories
+    echo "=== 官方 kmods 已无匹配当前 vermagic 的目录，移除 kmods 在线源行（本地捆绑 kmod 不受影响）===" >&2
+  fi
+}
+
+# opkg 系：校验 repositories.conf 里的 kmods 行，失效则重解析或移除（幂等）
+heal_opkg_kmods_line() {
+  local lines line new_dir
+  lines="$(sed -nE 's#^src/gz [^ ]+ (https?://[^ ]*/kmods/[^ ]*)$#\1#p' repositories.conf 2>/dev/null || true)"
+  line="${lines%%$'\n'*}"
+  [[ -n "$line" ]] || return 0
+  if curl -fsSI --retry 2 --max-time 30 "$line" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "⚠️ kmods 在线源不可达（官方可能已轮换）：$line" >&2
+  if ! parse_ib_metadata; then
+    echo "⚠️ 无法从 IB 元数据解析 vermagic，保留原 kmods 行（仅影响额外 kmod 在线安装）" >&2
+    return 0
+  fi
+  if new_dir="$(resolve_kmods_dir)"; then
+    sed -i "s#${line}#${base_url}/targets/rockchip/armv8/kmods/${new_dir}#" repositories.conf
+    echo "=== kmods 在线源已重解析为 $new_dir ==="
+  else
+    sed -i "\#${line}#d" repositories.conf
+    echo "=== 官方 kmods 已无匹配当前 vermagic 的目录，移除 kmods 在线源行（本地捆绑 kmod 不受影响）===" >&2
+  fi
+}
+
 # apk 系 IB（无 repositories.conf）且 standalone 开启时，运行时 apk 只用
 # 本地捆绑索引；自建 IB 仅捆绑默认包，不解除门禁则官方在线源形同虚设
 if [[ ! -f repositories.conf ]] && grep -q '^CONFIG_IB_STANDALONE=y$' .config; then
@@ -38,32 +114,25 @@ fi
 
 if [[ -f repositories ]]; then
   # apk 系：repositories 多在底包构建阶段已由本脚本补写过；已有官方源行
-  # 则只需上面的 standalone 门禁处理，直接退出
+  # 则做 kmods 自愈后直接退出
   if grep -qE '^https?://' repositories; then
+    heal_apk_kmods_line
     echo "IB 已自带 repositories（含官方远程源）"
     exit 0
   fi
   echo "IB 的 repositories 仅含本地源，将追加官方远程源"
 fi
 
-arch="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
-kernel_name="$(basename "$(find packages -maxdepth 1 \( -name 'kernel-*.apk' -o -name 'kernel-*.ipk' -o -name 'kernel_*.ipk' \) 2>/dev/null | head -n1)")"
-kernel_ver="$(printf '%s' "$kernel_name" | sed -nE 's/^kernel[-_]([0-9][0-9.]*)~.*/\1/p')"
-kernel_hash="$(printf '%s' "$kernel_name" | sed -nE 's/.*~([0-9a-f]{32})-.*/\1/p')"
-[[ -n "$arch" && -n "$kernel_ver" && -n "$kernel_hash" ]] ||
+parse_ib_metadata ||
   fail "无法从 IB 元数据解析 arch/内核版本/vermagic（$arch / $kernel_ver / $kernel_hash）"
 
-case "$ib_version" in
-  master) base_url="https://downloads.immortalwrt.org/snapshots" ;;
-  *)      base_url="https://downloads.immortalwrt.org/releases/$ib_version" ;;
-esac
-kmods_dir="$(curl -fsSL --retry 2 "$base_url/targets/rockchip/armv8/kmods/" 2>/dev/null |
-  sed -nE "s#.*href=\"([^\"]*-$kernel_hash)/\".*#\1#p" | head -n1)" || kmods_dir=""
+kmods_dir="$(resolve_kmods_dir)" || kmods_dir=""
 
 if [[ -f repositories.conf ]]; then
   # 24.10（opkg）系：repositories.conf 已存在（仅本地源），在文件前部插入官方远程源
   if grep -qE '^src/gz .*releases/' repositories.conf; then
-    echo "repositories.conf 已含官方远程源，无需补写"
+    heal_opkg_kmods_line
+    echo "repositories.conf 已含官方远程源"
     exit 0
   fi
   {

@@ -6,9 +6,10 @@
 #   X.Y-SNAPSHOT openwrt-X.Y 分支滚动快照：官方源 releases/X.Y-SNAPSHOT/，源码锁
 #                version.buildinfo 里的 revision（rNNNNN-<hash>）
 #   master       master 分支滚动快照：官方源 snapshots/，源码锁 revision
-# 滚动快照不做 ABI 强校验（官方产物随时被新构建覆盖，无法作为固定契约）：
-# 源码锁 revision + 全量 kmod 本地捆绑保证固件自包含，与官方源的 kmod
-# 兼容是尽力而为。正式版 X.Y.Z 的官方产物目录不可变，ABI 强校验照常生效。
+# 滚动快照（X.Y-SNAPSHOT / master）源码锁 version.buildinfo 的 revision——
+# 正是官方当前产物编译的 commit，与正式版一样做 ABI 强校验（build_config.sh
+# check-abi 三种形态统一校验）：配置合成一致（CLK_RK3528 已排除）则哈希相同；
+# 官方轮换产物导致的失败重跑工作流即可。
 # 具体版本只需系列在 firmware.conf 的 supported_series 内（master 始终可用）；
 # 是否"已验证"由编译后的 ABI 强校验兜底，而不是靠版本白名单拦截。
 # 输出：version/series/kind/tag/clone_ref/clone_commit/base_url/kernel_kmods/

@@ -40,13 +40,21 @@ for patch in "${patches[@]}"; do
   esac
   [[ "$scope" == "$series" ]] || continue
   echo "=== Applying patch: $(basename "$patch") ==="
-  git apply --check --3way "$patch" || {
+  # 浅克隆（--depth=1 / --filter=blob:none）常缺补丁 index 行引用的旧 blob，
+  # --3way 会报 "repository lacks the necessary blob"——但这不代表补丁冲突，
+  # 源码其他位置演进而补丁上下文未动时，纯 git apply 仍可干净应用；
+  # 两级检查都失败才是真冲突，才走 --reject 展示 .rej 并失败
+  if git apply --check --3way "$patch" 2>/dev/null; then
+    git apply --3way "$patch"
+  elif git apply --check "$patch" 2>/dev/null; then
+    echo "    3way 所需 blob 不在浅克隆内，已退回直接应用: $(basename "$patch")"
+    git apply "$patch"
+  else
     echo "Patch check failed: $patch"
     git apply --reject "$patch" || true
     find . -name '*.rej' -print -exec cat {} \;
     exit 1
-  }
-  git apply --3way "$patch"
+  fi
   applied=$((applied + 1))
 done
 

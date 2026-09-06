@@ -76,7 +76,9 @@ jobs:
       matrix:
         version: ${{ fromJSON(needs.matrix.outputs.versions) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # 远程源工作正常时单次组装约 5 分钟；一旦批量失败转逐包降级，每个成功的
+    # 探测都是完整 make image，十几个插件最坏约 1 小时
+    timeout-minutes: 120
 
     steps:
       - name: 检出支持仓库
@@ -216,6 +218,12 @@ jobs:
           TAG="immortalwrt-h28k-custom-$V"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
           TITLE="ImmortalWrt H28K 定制固件 $V"
+          # 密码与仓库默认值一致才写进公开 Release 页；自定义密码不外发
+          if [[ "${{ inputs.password }}" == "password" ]]; then
+            PASS_LINE='- **默认密码**：`password`'
+          else
+            PASS_LINE='- **默认密码**：（已自定义，与构建输入一致，不在此显示）'
+          fi
           NOTES="## ImmortalWrt H28K 定制固件 $V
 
           - **构建类型**：ImageBuilder 组装（开箱即用定制版）
@@ -223,7 +231,7 @@ jobs:
           - **基于底包**：ImmortalWrt ${{ matrix.version }}
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`${{ inputs.lan_ip }}\`
-          - **默认密码**：\`${{ inputs.password }}\`
+          $PASS_LINE
           ${{ env.PLUGIN_LINE }}
           ${{ env.OK_LINE }}
           ${{ env.MISSING_LINE }}

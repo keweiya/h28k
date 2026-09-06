@@ -327,6 +327,37 @@ jobs:
         run: |
           TAG="immortalwrt-h28k-$REL"
           TITLE="ImmortalWrt H28K 周更固件 $REL（基础 + 定制）"
+          # 密码与仓库默认值一致才写进公开 Release 页；自定义密码不外发
+          if [[ "$PASSWORD" == "password" ]]; then
+            PASS_LINE='- **默认密码**：`password`'
+          else
+            PASS_LINE='- **默认密码**：（已自定义，与构建输入一致，不在此显示）'
+          fi
+          # 插件安装情况如实汇报：组装脚本把预检剔除与逐包降级失败写入
+          # out/missing-packages.txt、out/failed-packages.txt（不存在则视为空）
+          cp out/missing-packages.txt missing.txt 2>/dev/null || touch missing.txt
+          cp out/failed-packages.txt failed.txt 2>/dev/null || touch failed.txt
+          failed_note=''
+          while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            case "$p" in luci-i18n-*) continue ;; esac
+            failed_note="$failed_note $p"
+          done < failed.txt
+          missing_note=''
+          while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            case "$p" in luci-i18n-*) continue ;; esac
+            missing_note="$missing_note $p"
+          done < missing.txt
+          if [[ -n "${failed_note// /}" || -n "${missing_note// /}" ]]; then
+            PLUGIN_STATUS='- **⚠ 定制固件以下插件未能安装（已自动跳过）**：'
+            for p in $missing_note $failed_note; do
+              PLUGIN_STATUS="$PLUGIN_STATUS
+            - $p"
+            done
+          else
+            PLUGIN_STATUS='- ✅ 定制固件全部插件安装成功'
+          fi
           NOTES="## ImmortalWrt H28K 周更固件 $REL（基础 + 定制）
 
           - **构建类型**：每周四定时编译（基础固件 + 定制固件同发布，默认 2G 根目录）
@@ -334,7 +365,7 @@ jobs:
           - **上游版本**：$REVISION
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`$LAN_IP\`
-          - **默认密码**：\`$PASSWORD\`
+          $PASS_LINE
           - **基础固件**（纯净官方组件，不含第三方插件）：
             - \`immortalwrt-$REL-h28k-base-squashfs-sysupgrade.img.gz\`
             - \`immortalwrt-$REL-h28k-base-ext4-sysupgrade.img.gz\`
@@ -342,6 +373,7 @@ jobs:
           - **定制固件**（已预装 config/ib-packages.list 启用的插件）：
             - \`immortalwrt-$REL-h28k-custom-squashfs-sysupgrade.img.gz\`
             - \`immortalwrt-$REL-h28k-custom-ext4-sysupgrade.img.gz\`
+          $PLUGIN_STATUS
           - **ImageBuilder**（内核 ABI 一致，可自行组装）：
             - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`"
 

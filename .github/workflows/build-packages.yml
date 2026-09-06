@@ -137,8 +137,11 @@ jobs:
       - name: 使用官方 feeds
         working-directory: sdk
         run: |
+          # base_url 由 select_release.sh 输出：正式版与 X.Y-SNAPSHOT 为
+          # releases/<版本>，master 为 snapshots——不能写死 releases/，否则
+          # master 的 feeds.buildinfo 404
           curl -fsSL \
-            "https://downloads.immortalwrt.org/releases/${{ steps.release.outputs.version }}/targets/rockchip/armv8/feeds.buildinfo" \
+            "${{ steps.release.outputs.base_url }}/targets/rockchip/armv8/feeds.buildinfo" \
             -o feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a

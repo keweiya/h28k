@@ -169,6 +169,9 @@ load_firmware_config() {
   lan_ip="${CFG_LAN_IP:-$lan_ip}"
   password="${CFG_PASSWORD:-$password}"
   rootfs_size="${CFG_ROOTFS_SIZE:-$rootfs_size}"
+  pppoe_user="${CFG_PPPOE_USER:-$pppoe_user}"
+  pppoe_password="${CFG_PPPOE_PASSWORD:-$pppoe_password}"
+  bypass_gateway="${CFG_BYPASS_GATEWAY:-$bypass_gateway}"
   # 根目录大小兼容 2G/1G/512M 与纯 MiB 数字，统一换算为 MiB
   case "$rootfs_size" in
     *[Gg]) rootfs_size=$(( ${rootfs_size%[Gg]} * 1024 )) ;;
@@ -202,6 +205,8 @@ load_firmware_config() {
   fi
   [[ -z "$bypass_gateway" ]] || ipv4_ok "$bypass_gateway" ||
     fail "invalid bypass_gateway: $bypass_gateway"
+  [[ -z "$bypass_gateway" || "$bypass_gateway" != "$lan_ip" ]] ||
+    fail "bypass_gateway 不能与 lan_ip 相同：旁路由网关不能指向自己的 LAN 地址"
   [[ -z "$pppoe_user" || -z "$bypass_gateway" ]] ||
     fail "pppoe_user 与 bypass_gateway 互斥：拨号与旁路由只能二选一"
   if [[ -n "$wifi_ssid" ]]; then

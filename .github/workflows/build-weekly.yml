@@ -35,6 +35,21 @@ on:
           - 2G
           - 1G
           - 512M
+      pppoe_user:
+        description: 'PPPoE 拨号账号（留空 = 用 firmware.conf，也为空则 WAN 保持 DHCP）'
+        type: string
+        required: false
+        default: ''
+      pppoe_password:
+        description: 'PPPoE 拨号密码（与账号同时填写）'
+        type: string
+        required: false
+        default: ''
+      bypass_gateway:
+        description: '旁路由模式：填主路由地址（与 PPPoE 互斥；需与 LAN 地址同网段且不能相同）'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -263,7 +278,14 @@ jobs:
       - name: 用 ImageBuilder 组装定制固件（预装 ib-packages.list 插件）
         working-directory: source
         env:
+          # 定制固件与下方 Release 说明使用同一组 IP/密码（此前组装未接收
+          # 输入导致固件用 conf 值而说明写输入值的错位）
+          CFG_LAN_IP: ${{ inputs.lan_ip }}
+          CFG_PASSWORD: ${{ inputs.password }}
           CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
+          CFG_PPPOE_USER: ${{ inputs.pppoe_user }}
+          CFG_PPPOE_PASSWORD: ${{ inputs.pppoe_password }}
+          CFG_BYPASS_GATEWAY: ${{ inputs.bypass_gateway }}
         run: |
           IB_TARBALL=$(ls bin/targets/rockchip/armv8/immortalwrt-imagebuilder-*.tar.zst | head -n1)
           mkdir -p out

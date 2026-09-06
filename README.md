@@ -67,7 +67,7 @@
 ```
 
 - **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会补写 `repositories` 在线源清单并解除 standalone 门禁（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成也不加载），IB 本地没有的包组装时从官方源在线拉取；设备专属 kmod 随构建捆绑进 IB，官方 kmods 仓库缺的包也能本地安装，源清单里失效的 kmods 目录会在组装前自动重解析。
-- **插件包**：Actions → 「H28K 插件包构建」→ 选版本。编译 `config/source-plugins.list` 里启用的源码插件（默认全注释，纯净固件可跳过）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟，dl/ccache 缓存加速重复构建），也可勾选"立即组装固件"一步出固件。单个插件编译失败会自动跳过并在 Release 说明标注（不影响其余插件，全部失败才中止）。
+- **插件包**：Actions → 「H28K 插件包构建」→ 选版本。编译 `config/source-plugins.list` 里启用的源码插件（**默认启用 nikki 代理与 fluent 主题**；想要纯净固件注释掉对应两行后重跑）并长期保存到 Release；插件更新只需重跑这个（约 15~30 分钟，dl/ccache 缓存加速重复构建），也可勾选"立即组装固件"一步出固件。单个插件编译失败会自动跳过并在 Release 说明标注（不影响其余插件，全部失败才中止）。
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。首启开机默认（WAN 拨号/旁路由、主机名、Wi-Fi、中文界面、时区 NTP）在 `config/firmware.conf` 设置，仅作用于定制固件，设备上可随时改；其中 WAN 拨号与旁路由也可在组装/周更工作流输入框临时填写（留空 = 用 conf 值，旁路由网关不能与 LAN 地址相同）。
 - **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 
@@ -112,8 +112,8 @@ h28k-openwrt/
 
 ## 固件组件
 
-- **基础固件**（阶段 1 Release）与**默认定制固件**（阶段 2 产物）：均为纯净官方组件（`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server`），**不含第三方插件**
-- 需要第三方插件（nikki、fluent 主题等）：在 `config/source-plugins.list` 取消注释并重跑「构建插件包」，之后所有阶段 2 固件自动带上
+- **基础固件**（阶段 1 Release）：纯净官方组件（`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server`），**不含第三方插件**
+- **默认定制固件**（阶段 2 产物）：官方源包（见 `config/ib-packages.list`）+ 源码插件（`config/source-plugins.list` 默认启用的 nikki 代理与 fluent 主题——需先跑「构建插件包」产出对应版本的插件包）；不想要源码插件时注释掉重跑即可
 
 ## 设备信息
 

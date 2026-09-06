@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 
-# 为自建 ImageBuilder 补写在线软件源清单。
+# 为自建 ImageBuilder 补写在线软件源清单，并解除 standalone 门禁。
 # 上游 make imagebuilder 在非 buildbot 构建下默认 IB_STANDALONE=y（见
 # target/imagebuilder/Config.in: default y if !BUILDBOT）：全部软件包捆绑
-# 本地、不生成在线源清单，IB 本地没有的包将无法安装；官方 buildbot
-# 产物自带。且上游生成逻辑的 kmods 源行被 CONFIG_BUILDBOT 门住、版本
+# 本地，且运行时 apk 调用被门禁为不加载 repositories（见
+# target/imagebuilder/files/Makefile 的 APK 变量：仅非 standalone 才传
+# --repositories-file），IB 本地没有的包将无法安装。故除补写清单外，
+# 还需把 .config 的 CONFIG_IB_STANDALONE 置为未设置——IB 运行时不跑
+# defconfig，直接改写稳定生效；IB 内 keys/ 自带官方快照公钥，远程索引
+# 验签可过。上游清单生成逻辑的 kmods 源行被 CONFIG_BUILDBOT 门住、版本
 # 替换依赖 buildbot 注入的版本号，无法通过改配置直接复现，故按官方
 # release 的清单模板生成（25.12 系已验证与官方逐字节一致）：
 #   - arch 取自 IB .config 的 CONFIG_TARGET_ARCH_PACKAGES；
 #   - kmods 目录按 IB 内核包的 vermagic 从官方 kmods 索引解析。
 # 用法：ensure_ib_repositories.sh <已解包的 IB 目录> <版本号>
-#   - 25.12（apk）系：补写 repositories；
-#   - 24.10（opkg）系：在既有 repositories.conf 前部插入官方远程源；
-#   - 均幂等，已补写时原样退出。
+#   - 25.12/master（apk）系：补写 repositories + 关闭 IB_STANDALONE；
+#   - 24.10（opkg）系：在既有 repositories.conf 前部插入官方远程源
+#     （opkg 始终 -f repositories.conf，无 standalone 门禁，不用改）；
+#   - 均幂等，已处理时原样退出。
 
 set -euo pipefail
 
@@ -24,11 +29,18 @@ ib_version="${2:-}"
 [[ -d "$ib_dir" ]] || fail "IB directory not found: $ib_dir"
 cd "$ib_dir"
 
+# apk 系 IB（无 repositories.conf）且 standalone 开启时，运行时 apk 只用
+# 本地捆绑索引；自建 IB 仅捆绑默认包，不解除门禁则官方在线源形同虚设
+if [[ ! -f repositories.conf ]] && grep -q '^CONFIG_IB_STANDALONE=y$' .config; then
+  sed -i 's/^CONFIG_IB_STANDALONE=y$/# CONFIG_IB_STANDALONE is not set/' .config
+  echo "已关闭 IB_STANDALONE：make image 时 apk 将加载 repositories 官方在线源"
+fi
+
 if [[ -f repositories ]]; then
-  # apk 系自建 IB 的 repositories 是 standalone 模式生成的，仅含本地源一行；
-  # 此时不能直接退出，需要追加官方远程源（见文末 apk 分支）
+  # apk 系：repositories 多在底包构建阶段已由本脚本补写过；已有官方源行
+  # 则只需上面的 standalone 门禁处理，直接退出
   if grep -qE '^https?://' repositories; then
-    echo "IB 已自带 repositories（含官方远程源），无需补写"
+    echo "IB 已自带 repositories（含官方远程源）"
     exit 0
   fi
   echo "IB 的 repositories 仅含本地源，将追加官方远程源"
@@ -77,8 +89,8 @@ if [[ -f repositories.conf ]]; then
   exit 0
 fi
 
-# 25.12（apk）系：生成/追加 repositories（与官方模板一致）
-# 注意用 >> 追加：standalone 自建 IB 的 repositories 已含本地源行，不能覆盖
+# 25.12/master（apk）系：生成/追加 repositories（与官方模板一致）
+# 用 >> 追加以兼容既有文件（已含本地源行时不能覆盖）
 {
   echo "$base_url/targets/rockchip/armv8/packages/packages.adb"
   echo "$base_url/packages/$arch/base/packages.adb"

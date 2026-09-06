@@ -6,13 +6,19 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 source "$SCRIPT_DIR/config.sh"
 
-exclude_rk3528_from_abi() {
-  local kernel_defaults="$1"
+exclude_symbols_from_abi() {
+  local kernel_defaults="$1"; shift
+  local chain="" sym
+  for sym in "$@"; do
+    chain="$chain | grep -v '^${sym}'"
+  done
   sed -i \
-    "/\.config\.set.*\.vermagic/s/| LC_ALL=C sort/| grep -v '^CONFIG_CLK_RK3528=y' | LC_ALL=C sort/" \
+    "/\.config\.set.*\.vermagic/s/| LC_ALL=C sort/${chain} | LC_ALL=C sort/" \
     "$kernel_defaults"
-  [[ "$(grep -Fc "grep -v '^CONFIG_CLK_RK3528=y'" "$kernel_defaults")" -eq 1 ]] ||
-    fail "kernel ABI generation rule was not updated"
+  for sym in "$@"; do
+    [[ "$(grep -Fc "grep -v '^${sym}'" "$kernel_defaults")" -eq 1 ]] ||
+      fail "kernel ABI generation rule was not updated ($sym)"
+  done
 }
 
 source_dir="${1:-}"
@@ -52,8 +58,21 @@ if [[ "$check_official_abi" == true ]]; then
   # 根目录大小来自 firmware.conf 的 rootfs_size（工作流输入可覆盖），
   # 在设备种子之后追加，make defconfig 时以最后写入的值为准
   printf 'CONFIG_TARGET_ROOTFS_PARTSIZE=%s\n' "$rootfs_size" >> .config
-  [[ "$release_series" == 24.10 ]] &&
-    exclude_rk3528_from_abi include/kernel-defaults.mk
+  # CLK_RK3528：设备种子启用而官方未启用。CONFIG_KEYBOARD_ADC：上游 24.10
+  # 分支 v24.10.4 起才有 kmod-input-adc-keys 定义，1/2/3 需补丁回填该 kmod
+  # （官方这些版本未启用该符号）。两个差量符号从 vermagic 哈希中排除以对齐
+  # 官方 ABI——新增模块不改动核心内核代码，远程官方 kmod 仍可正常加载
+  if [[ "$release_series" == 24.10 ]]; then
+    case "$release_version" in
+      24.10.1|24.10.2|24.10.3)
+        exclude_symbols_from_abi include/kernel-defaults.mk \
+          CONFIG_CLK_RK3528=y CONFIG_KEYBOARD_ADC=m
+        ;;
+      *)
+        exclude_symbols_from_abi include/kernel-defaults.mk CONFIG_CLK_RK3528=y
+        ;;
+    esac
+  fi
 else
   cp "$device_config" .config
   printf 'CONFIG_TARGET_ROOTFS_PARTSIZE=%s\n' "$rootfs_size" >> .config

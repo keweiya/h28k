@@ -313,12 +313,6 @@ jobs:
           for f in $TARGET_DIR/immortalwrt-imagebuilder-*; do
             [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
           done
-          # 自建 SDK（与固件同源同 feeds 状态）+ feeds 锁定文件，供插件包构建使用
-          for f in $TARGET_DIR/immortalwrt-sdk-*.tar.zst; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-base-sdk-rockchip-armv8.tar.zst"
-          done
-          [ -f source/feeds.conf.default ] && \
-            cp -f source/feeds.conf.default "release_files/immortalwrt-${V}-h28k-base-feeds.conf.default" || true
 
           echo "=== 整理后待发布文件 ==="
           ls -lh release_files/
@@ -351,7 +345,6 @@ jobs:
             - \`immortalwrt-${V}-h28k-base-squashfs-sysupgrade.img.gz\`
             - \`immortalwrt-${V}-h28k-base-rootfs.tar.gz\`
             - \`immortalwrt-${V}-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`
-            - \`immortalwrt-${V}-h28k-base-sdk-rockchip-armv8.tar.zst\`（插件包构建用）
 
           *日常使用建议下载带有 \`-custom\` 标识的定制固件。*"
 

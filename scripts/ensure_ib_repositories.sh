@@ -25,8 +25,13 @@ ib_version="${2:-}"
 cd "$ib_dir"
 
 if [[ -f repositories ]]; then
-  echo "IB 已自带 repositories，无需补写"
-  exit 0
+  # apk 系自建 IB 的 repositories 是 standalone 模式生成的，仅含本地源一行；
+  # 此时不能直接退出，需要追加官方远程源（见文末 apk 分支）
+  if grep -qE '^https?://' repositories; then
+    echo "IB 已自带 repositories（含官方远程源），无需补写"
+    exit 0
+  fi
+  echo "IB 的 repositories 仅含本地源，将追加官方远程源"
 fi
 
 arch="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\(.*\)"/\1/p' .config | head -n1)"
@@ -72,7 +77,8 @@ if [[ -f repositories.conf ]]; then
   exit 0
 fi
 
-# 25.12（apk）系：生成 repositories（与官方 release 逐字节一致）
+# 25.12（apk）系：生成/追加 repositories（与官方模板一致）
+# 注意用 >> 追加：standalone 自建 IB 的 repositories 已含本地源行，不能覆盖
 {
   echo "$base_url/targets/rockchip/armv8/packages/packages.adb"
   echo "$base_url/packages/$arch/base/packages.adb"
@@ -83,7 +89,7 @@ fi
   echo "$base_url/packages/$arch/packages/packages.adb"
   echo "$base_url/packages/$arch/routing/packages.adb"
   echo "$base_url/packages/$arch/telephony/packages.adb"
-} > repositories
+} >> repositories
 
 if [[ -n "$kmods_dir" ]]; then
   echo "=== IB 缺少 repositories，已按官方模板生成（版本 $ib_version，arch $arch，kmods $kmods_dir）==="

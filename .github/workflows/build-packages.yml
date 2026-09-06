@@ -263,4 +263,5 @@ jobs:
           # 直接替换：删除旧 Release 与 tag 后整体重建
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin :refs/tags/"$TAG" 2>/dev/null || true
-          gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES"
+          # 插件包是独立 Release，不参与 Latest 竞争（Latest 保持给最新正式版固件）
+          gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES" --latest=false

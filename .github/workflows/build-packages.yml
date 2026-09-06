@@ -27,45 +27,6 @@ on:
         type: boolean
         required: true
         default: true
-      build_firmware:
-        description: '编译完插件后立即组装定制固件'
-        type: boolean
-        required: false
-        default: false
-      lan_ip:
-        description: '组装固件时的 LAN 管理地址'
-        type: string
-        required: false
-        default: '192.168.100.1'
-      password:
-        description: '组装固件时的 root 密码'
-        type: string
-        required: false
-        default: 'password'
-      rootfs_size:
-        description: '组装固件时的根目录大小'
-        type: choice
-        required: false
-        default: 2G
-        options:
-          - 2G
-          - 1G
-          - 512M
-      pppoe_user:
-        description: 'PPPoE 拨号账号（留空 = 用 firmware.conf，也为空则 WAN 保持 DHCP）'
-        type: string
-        required: false
-        default: ''
-      pppoe_password:
-        description: 'PPPoE 拨号密码（与账号同时填写）'
-        type: string
-        required: false
-        default: ''
-      bypass_gateway:
-        description: '旁路由模式：填主路由地址（与 PPPoE 互斥；需与 LAN 地址同网段且不能相同）'
-        type: string
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -116,13 +77,6 @@ jobs:
             build-essential clang cmake cpio file flex gawk gettext git libelf-dev \
             libncurses-dev libssl-dev python3 python3-ply python3-pyelftools \
             rsync subversion swig unzip upx-ucl wget xxd zlib1g-dev zstd
-
-      - name: 检查参数组合
-        run: |
-          if [[ "${{ inputs.build_firmware }}" == "true" && "${{ inputs.publish_release }}" != "true" ]]; then
-            echo "build_firmware 需要同时开启 publish_release"
-            exit 1
-          fi
 
       - name: 选择目标版本
         id: release
@@ -310,85 +264,3 @@ jobs:
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin :refs/tags/"$TAG" 2>/dev/null || true
           gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES"
-
-      - name: 解析基础 Release（ImageBuilder）
-        if: inputs.build_firmware
-        id: base
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
-            "${{ matrix.version }}" "$GITHUB_OUTPUT"
-
-      - name: 下载 ImageBuilder
-        if: inputs.build_firmware
-        run: |
-          curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.zst
-
-      - name: 组装定制固件
-        if: inputs.build_firmware
-        env:
-          CFG_LAN_IP: ${{ inputs.lan_ip }}
-          CFG_PASSWORD: ${{ inputs.password }}
-          CFG_ROOTFS_SIZE: ${{ inputs.rootfs_size }}
-          CFG_PPPOE_USER: ${{ inputs.pppoe_user }}
-          CFG_PPPOE_PASSWORD: ${{ inputs.pppoe_password }}
-          CFG_BYPASS_GATEWAY: ${{ inputs.bypass_gateway }}
-        run: |
-          mkdir -p out
-          plugins_arg=""
-          [ -f "${{ env.PKG_FILE }}" ] && plugins_arg="${{ env.PKG_FILE }}"
-          bash "$GITHUB_WORKSPACE/scripts/build_ib_image.sh" \
-            ib.tar.zst \
-            "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "$GITHUB_WORKSPACE/config/ib-packages.list" \
-            "$GITHUB_WORKSPACE/out" \
-            "$plugins_arg" \
-            "${{ matrix.version }}"
-
-      - name: 整理并重命名定制固件产物
-        if: inputs.build_firmware
-        run: |
-          mkdir -p custom_release_files
-          V="${{ steps.base.outputs.rel_suffix }}"
-          rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
-
-          for f in out/*ext4-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz"
-          done
-          for f in out/*squashfs-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz"
-          done
-          for f in out/*rootfs.tar.gz; do
-            [ -f "$f" ] && cp -f "$f" "custom_release_files/immortalwrt-${V}-h28k-custom-rootfs.tar.gz"
-          done
-
-      - name: 发布定制固件 Release（同步至 Custom Release）
-        if: inputs.build_firmware
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          V="${{ steps.base.outputs.rel_suffix }}"
-          TAG="immortalwrt-h28k-custom-$V"
-          BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
-          TITLE="ImmortalWrt H28K 定制固件 $V"
-          NOTES="## ImmortalWrt H28K 定制固件 $V
-
-          - **构建类型**：插件编译后自动组装定制包
-          - **组装时间**：$BUILD_TIME
-          - **基于底包**：ImmortalWrt ${{ matrix.version }}
-          - **管理地址**：\`${{ inputs.lan_ip }}\`
-          - **默认密码**：\`${{ inputs.password }}\`
-          - **包含附件**：
-            - \`immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-h28k-custom-rootfs.tar.gz\`"
-
-          shopt -s nullglob
-          FILES=(custom_release_files/*)
-          if [ ${#FILES[@]} -gt 0 ]; then
-            # 直接替换：删除旧 Release 与 tag 后整体重建
-            gh release delete "$TAG" --yes 2>/dev/null || true
-            git push origin :refs/tags/"$TAG" 2>/dev/null || true
-            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES"
-          fi

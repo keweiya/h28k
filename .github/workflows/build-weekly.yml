@@ -329,6 +329,13 @@ jobs:
             [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-imagebuilder-rockchip-armv8.tar.zst"
           done
 
+          # 自建 SDK（与固件同源同 feeds 状态）+ feeds 锁定文件，供插件包构建使用
+          for f in $TARGET_DIR/immortalwrt-sdk-*.tar.zst; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-base-sdk-rockchip-armv8.tar.zst"
+          done
+          [ -f source/feeds.conf.default ] && \
+            cp -f source/feeds.conf.default "release_files/immortalwrt-$rel-h28k-base-feeds.conf.default" || true
+
           # 固件产物缺失时直接失败
           BASE_OK=0; CUSTOM_OK=0
           for f in release_files/*h28k-base*squashfs-sysupgrade*; do [ -f "$f" ] && BASE_OK=1; done
@@ -398,7 +405,9 @@ jobs:
             - \`immortalwrt-$REL-h28k-custom-ext4-sysupgrade.img.gz\`
           $PLUGIN_STATUS
           - **ImageBuilder**（内核 ABI 一致，可自行组装）：
-            - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`"
+            - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`
+          - **SDK**（供插件包构建，与固件同源同 feeds 状态）：
+            - \`immortalwrt-$REL-h28k-base-sdk-rockchip-armv8.tar.zst\`"
 
           shopt -s nullglob
           FILES=(release_files/*)

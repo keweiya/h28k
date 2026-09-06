@@ -44,6 +44,8 @@ jobs:
 
       - name: 选择目标版本
         id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/select_release.sh" \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
@@ -52,6 +54,8 @@ jobs:
 
       - name: 解析 SDK 下载地址
         id: sdk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/select_sdk.sh" \
             "${{ steps.release.outputs.version }}" \
@@ -84,12 +88,17 @@ jobs:
       - name: 使用官方 feeds
         working-directory: sdk
         run: |
-          # base_url 由 select_release.sh 输出：正式版与 X.Y-SNAPSHOT 为
-          # releases/<版本>，master 为 snapshots——不能写死 releases/，否则
-          # master 的 feeds.buildinfo 404
-          curl -fsSL \
-            "${{ steps.release.outputs.base_url }}/targets/rockchip/armv8/feeds.buildinfo" \
-            -o feeds.conf.default
+          # feeds 锁定优先用与底包同源的 feeds.conf（自建 SDK 时由 select_sdk
+          # 从基础 Release 取得）；官方 SDK 回退路径才用当前轮换的
+          # feeds.buildinfo——其锁定提交可能处于上游中间态（如 liblua 已被
+          # packages feed 移除而 lucihttp 仍引用），导致依赖解析失败
+          if [ -n "${{ steps.sdk.outputs.feeds_url }}" ]; then
+            curl -fsSL --retry 3 "${{ steps.sdk.outputs.feeds_url }}" -o feeds.conf.default
+          else
+            curl -fsSL --retry 3 \
+              "${{ steps.release.outputs.base_url }}/targets/rockchip/armv8/feeds.buildinfo" \
+              -o feeds.conf.default
+          fi
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 

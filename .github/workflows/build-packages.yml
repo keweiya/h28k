@@ -1,27 +1,8 @@
-name: H28K 插件包构建（SDK 编译源码插件 → 长期 Release）
+name: H28K 插件包构建（24.10 出 ipk / 25.12 出 apk，按系列发布）
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: '目标版本'
-        type: choice
-        required: true
-        options:
-          - all
-          - master
-          - 25.12
-          - 25.12-SNAPSHOT
-          - 25.12.1
-          - 25.12.0
-          - 24.10
-          - 24.10-SNAPSHOT
-          - 24.10.6
-          - 24.10.5
-          - 24.10.4
-          - 24.10.3
-          - 24.10.2
-          - 24.10.1
       publish_release:
         description: '发布插件包为 Release'
         type: boolean
@@ -32,35 +13,21 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-packages-hinlink-h28k-${{ inputs.version }}
+  group: build-packages-hinlink-h28k
   cancel-in-progress: false
 
 jobs:
-  matrix:
-    name: 解析目标版本矩阵
-    runs-on: ubuntu-24.04
-    outputs:
-      versions: ${{ steps.resolve.outputs.versions }}
-      latest: ${{ steps.resolve.outputs.latest }}
-    steps:
-      - name: 检出支持仓库
-        uses: actions/checkout@v4
-
-      - name: 解析版本列表
-        id: resolve
-        run: |
-          bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
-            "$GITHUB_WORKSPACE/config/firmware.conf" \
-            "${{ inputs.version }}" \
-            "$GITHUB_OUTPUT"
-
   packages:
     name: 编译 ${{ matrix.version }} 插件包
-    needs: matrix
     strategy:
       fail-fast: false
+      # 固定使用两个系列滚动快照的官方 SDK：24.10 出 ipk、25.12 出 apk。
+      # 插件包按系列发布（不带固件版本号），同系列全部版本的组装共用；
+      # 快照 SDK 编译的用户态包对同系列各点版本兼容
       matrix:
-        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
+        version:
+          - 24.10-SNAPSHOT
+          - 25.12-SNAPSHOT
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -205,9 +172,9 @@ jobs:
             echo "没有收集到任何插件包"
             exit 1
           fi
-          # 正式版沿用 vX.Y.Z 命名，滚动快照（master / X.Y-SNAPSHOT）用原样字符串
+          # 系列级命名（不带固件版本号）：24.10-SNAPSHOT → 24.10，25.12-SNAPSHOT → 25.12
           V="${{ matrix.version }}"
-          case "$V" in master|*-SNAPSHOT) ;; *) V="v$V" ;; esac
+          V="${V%-SNAPSHOT}"
           PKG_NAME="immortalwrt-${V}-h28k-packages.tar.gz"
           tar -czf "$PKG_NAME" -C stage .
           echo "PKG_FILE=$PKG_NAME" >> "$GITHUB_ENV"

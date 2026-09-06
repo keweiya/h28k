@@ -5,11 +5,13 @@ set -euo pipefail
 fail() { echo "error: $*" >&2; exit 1; }
 
 # 用法：apply_patches.sh <source-dir> <patches-dir> <series>
-#   series = 24.10 / 25.12（master 构建由调用方映射为 25.12）
+#   series = 24.10 / 25.12 / master
 # 补丁目录为单层结构，命名规则：<序号>-<功能>.<系列>.patch
 #   - 序号决定应用顺序（字典序）
 #   - -v<系列> 后缀决定适用范围：仅应用与 series 匹配的补丁；
 #     未知系列后缀视为命名错误，直接失败（防止补丁被静默跳过）
+#   - master 源码树沿用 25.12 系列补丁（同源）+ -vmaster 专属补丁
+#     （如上游删除的 kmod 定义恢复）
 
 source_dir="${1:-}"
 patch_dir="${2:-}"
@@ -19,8 +21,8 @@ series="${3:-}"
 [[ -d "$source_dir" ]] || fail "source directory not found: $source_dir"
 [[ -d "$patch_dir" ]] || fail "patch directory not found: $patch_dir"
 case "$series" in
-  24.10|25.12) ;;
-  *) fail "unknown series: $series（master 构建应映射为 25.12）" ;;
+  24.10|25.12|master) ;;
+  *) fail "unknown series: $series" ;;
 esac
 
 cd "$source_dir"
@@ -36,9 +38,11 @@ for patch in "${patches[@]}"; do
   case "$base" in
     *-v24.10) scope="24.10" ;;
     *-v25.12) scope="25.12" ;;
-    *) fail "补丁 $base 的系列后缀无法识别（应为 -v24.10 或 -v25.12）" ;;
+    *-vmaster) scope="master" ;;
+    *) fail "补丁 $base 的系列后缀无法识别（应为 -v24.10 / -v25.12 / -vmaster）" ;;
   esac
-  [[ "$scope" == "$series" ]] || continue
+  # master 源码树 = 25.12 系列补丁（同源）+ master 专属补丁
+  [[ "$scope" == "$series" || ( "$series" == "master" && "$scope" == "25.12" ) ]] || continue
   echo "=== Applying patch: $(basename "$patch") ==="
   # 浅克隆（--depth=1 / --filter=blob:none）常缺补丁 index 行引用的旧 blob，
   # --3way 会报 "repository lacks the necessary blob"——但这不代表补丁冲突，

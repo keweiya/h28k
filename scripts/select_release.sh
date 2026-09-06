@@ -104,11 +104,11 @@ fi
 
 rel_suffix="$(rel_suffix_of "$version")"
 
-# 补丁目录映射：master 当前与 25.12 板级补丁同源（已在官方快照 revision 上
-# 验证干净应用），直接复用 patches/25.12；上游分化导致补丁失配时再拆出
-# patches/master/ 并把这里的映射改回去
+# 补丁系列映射：master 源码树沿用 25.12 系列板级补丁（-v25.12，同源），再加
+# -vmaster 专属补丁（恢复上游删除的 kmod-saradc-rockchip 定义等）；若上游分化
+# 导致板级补丁也失配，把 -v25.12 复制为 -vmaster 后删除此处特判即可
 if [[ "$series" == "master" ]]; then
-  patch_series="25.12"
+  patch_series="master"
 else
   patch_series="$series"
 fi

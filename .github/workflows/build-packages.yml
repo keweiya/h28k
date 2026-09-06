@@ -102,6 +102,8 @@ jobs:
         version: ${{ fromJSON(needs.matrix.outputs.versions) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: 检出支持仓库
@@ -137,11 +139,23 @@ jobs:
             "${{ steps.release.outputs.version }}" \
             "$GITHUB_OUTPUT"
 
+      - name: 恢复下载与编译缓存（dl + ccache，按版本键）
+        uses: actions/cache@v4
+        with:
+          path: |
+            sdk/dl
+            sdk/.ccache
+          key: h28k-pkgcache-${{ steps.release.outputs.version }}-${{ github.run_id }}
+          restore-keys: |
+            h28k-pkgcache-${{ steps.release.outputs.version }}-
+            h28k-pkgcache-
+
       - name: 下载并解包 SDK
         run: |
           sdk_name="${{ steps.sdk.outputs.sdk_name }}"
           curl -fsSL --retry 3 "${{ steps.sdk.outputs.sdk_url }}" -o "$sdk_name"
-          mkdir sdk
+          # -p：缓存恢复会先创建 sdk/ 目录，不能因已存在而失败
+          mkdir -p sdk
           case "$sdk_name" in
             *.tar.zst) tar --zstd -xf "$sdk_name" -C sdk --strip-components=1 ;;
             *.tar.xz)  tar -xJf "$sdk_name" -C sdk --strip-components=1 ;;
@@ -175,7 +189,7 @@ jobs:
             echo "built=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 编译插件（全速并行，只输出错误）
+      - name: 编译插件（全速并行，逐包容错，只输出错误）
         if: steps.plugins.outputs.built == 'true'
         working-directory: sdk
         run: |
@@ -183,10 +197,17 @@ jobs:
           for name in "${names[@]}"; do
             echo "CONFIG_PACKAGE_${name}=y" >> .config
           done
+          # ccache 跨运行编译缓存（配合 actions/cache 的 sdk/.ccache，
+          # 容量由 job env 的 CCACHE_MAXSIZE 控制）
+          echo "CONFIG_CCACHE=y" >> .config
           make defconfig
           # 本步骤自行判断退出码：set +e 保住 PIPESTATUS（跟在 || true 后会被
           # true 重置为 0，失败会被误判成功、单核 V=s 详细重试永远不会触发）
+          # 逐包容错：单包终败记入 failed-packages.txt 并继续编其余包，
+          # 只有全部失败才中止（与组装阶段的缺包自动剔除同思路）
           set +e
+          : > failed-packages.txt
+          ok=0
           for name in "${names[@]}"; do
             echo "=== 编译插件: $name ==="
             make package/"$name"/compile -j"$(nproc)" 2>&1 | tee -a build.log | grep --line-buffered -iE 'error|failed'
@@ -196,20 +217,35 @@ jobs:
               make package/"$name"/compile -j1 V=s 2>&1 | tee -a build-single.log
               code=${PIPESTATUS[0]}
               if [ "$code" -ne 0 ]; then
-                echo "=== $name 单核重试仍失败 ==="
-                tail -n 200 build-single.log || true
-                exit "$code"
+                echo "    ⚠ 编译失败，已跳过: $name"
+                echo "$name" >> failed-packages.txt
+                continue
               fi
               echo "=== $name 单核重试成功 ==="
             fi
+            ok=$((ok+1))
           done
+          total=$(wc -l < plugin-names.txt)
+          echo "=== 编译完成：成功 $ok / $total ==="
+          if [ "$ok" -eq 0 ]; then
+            echo "❌ 全部插件编译失败"
+            tail -n 200 build-single.log || true
+            exit 1
+          fi
 
       - name: 收集插件包并标准化重命名
         if: steps.plugins.outputs.built == 'true'
         run: |
           mkdir -p stage
           find sdk/bin/packages \( -name '*.ipk' -o -name '*.apk' \) ! -name 'kmod-*' -exec cp {} stage/ \;
-          cp sdk/plugin-names.txt stage/packages.list
+          # packages.list 只保留编译成功的包：失败包若留在清单里，组装阶段
+          # 会尝试安装不存在的包（触发逐包降级拖慢甚至预检剔除）
+          if [ -s sdk/failed-packages.txt ]; then
+            grep -vxFf sdk/failed-packages.txt sdk/plugin-names.txt > stage/packages.list
+            cp sdk/failed-packages.txt stage/failed-packages.list
+          else
+            cp sdk/plugin-names.txt stage/packages.list
+          fi
           count=$(find stage \( -name '*.ipk' -o -name '*.apk' \) | wc -l)
           if [ "$count" -eq 0 ]; then
             echo "没有收集到任何插件包"
@@ -233,6 +269,18 @@ jobs:
           path: ${{ env.PKG_FILE }}
           retention-days: 30
 
+      - name: 上传编译日志与失败清单
+        if: steps.plugins.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-${{ matrix.version }}-h28k-packages-logs-${{ github.run_number }}
+          path: |
+            sdk/build.log
+            sdk/build-single.log
+            sdk/failed-packages.txt
+          if-no-files-found: ignore
+          retention-days: 15
+
       - name: 发布插件包 Release（独立 Packages Release）
         if: inputs.publish_release && steps.plugins.outputs.built == 'true'
         env:
@@ -240,11 +288,22 @@ jobs:
         run: |
           TAG="${{ env.PKG_TAG }}"
           TITLE="ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}"
+          # 编译失败的包如实标注（packages.list 已剔除，不会进入组装安装清单）
+          FAILED_LINE=''
+          if [ -s stage/failed-packages.list ]; then
+            FAILED_LINE='- **⚠ 以下插件编译失败，本次未包含**：'
+            while IFS= read -r p; do
+              [ -n "$p" ] || continue
+              FAILED_LINE="$FAILED_LINE
+            - $p"
+            done < stage/failed-packages.list
+          fi
           NOTES="## ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}
 
           - **组件类型**：源码插件独立编译包（供组装定制固件注入）
           - **基于底包**：ImmortalWrt ${{ steps.release.outputs.revision }}
-          - **已包含插件**：$(cat sdk/plugin-names.txt | tr '\n' ' ')
+          - **已包含插件**：$(cat stage/packages.list | tr '\n' ' ')
+          ${FAILED_LINE}
           - **附件内容**：\`${{ env.PKG_FILE }}\`（解压包含全部预编译 .ipk / .apk 及依赖）"
 
           # 直接替换：删除旧 Release 与 tag 后整体重建

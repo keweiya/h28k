@@ -14,10 +14,9 @@ ib_tarball="${1:-}"
 config_file="${2:-}"
 packages_list="${3:-}"
 out_dir="${4:-}"
-plugins_tarball="${5:-}"
-ib_version="${6:-}"
+ib_version="${5:-}"
 [[ -n "$ib_tarball" && -n "$config_file" && -n "$packages_list" && -n "$out_dir" ]] ||
-  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> [plugins-tarball] [ib-version]"
+  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> <ib-version>"
 [[ -f "$ib_tarball" ]] || fail "ImageBuilder tarball not found: $ib_tarball"
 [[ -f "$packages_list" ]] || fail "package list not found: $packages_list"
 
@@ -100,10 +99,6 @@ gen_uci_defaults() {
 [[ -d "$out_dir" ]] || mkdir -p "$out_dir"
 packages_list="$(cd "$(dirname -- "$packages_list")" && pwd)/$(basename -- "$packages_list")"
 out_dir="$(cd -- "$out_dir" && pwd)"
-if [[ -n "$plugins_tarball" ]]; then
-  [[ -f "$plugins_tarball" ]] || fail "plugins tarball not found: $plugins_tarball"
-  plugins_tarball="$(cd "$(dirname -- "$plugins_tarball")" && pwd)/$(basename -- "$plugins_tarball")"
-fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
@@ -124,16 +119,6 @@ cd "$ib_dir"
 # 保证 IB 本地没有的包仍可从官方源安装（与官方 release 完全一致、ABI 不变）。
 bash "$SCRIPT_DIR/ensure_ib_repositories.sh" "$ib_dir" "$ib_version"
 
-if [[ -n "$plugins_tarball" ]]; then
-  echo "=== 注入插件包（ipk/apk 自动匹配） ==="
-  plugins_dir="$work_dir/plugins"
-  mkdir -p "$plugins_dir"
-  tar -xzf "$plugins_tarball" -C "$plugins_dir"
-  find "$plugins_dir" \( -name '*.ipk' -o -name '*.apk' \) -exec cp -f {} "$ib_dir/packages/" \;
-  ipk_num="$(find "$ib_dir/packages" \( -name '*.ipk' -o -name '*.apk' \) | wc -l)"
-  echo "    ImageBuilder 本地包数量: $ipk_num"
-fi
-
 echo "=== 生成首启配置（IP/密码/主题/WAN 模式/主机名/Wi-Fi/语言/时区） ==="
 password_hash="$(printf '%s\n' "$password" | openssl passwd -6 -stdin)"
 mkdir -p files/etc/uci-defaults
@@ -146,12 +131,6 @@ packages="$(awk '
   { gsub(/[[:space:]]/, ""); if ($0 == "") next }
   { if ($0 ~ /=n$/) next; sub(/=y$/, ""); print }
 ' "$packages_list" | tr '\n' ' ')"
-# 源码插件：插件包内附 packages.list（构建插件包时写入的包名清单）自动并入安装列表，
-# 因此 source-plugins.list 里启用的插件无需写进 ib-packages.list
-if [[ -n "$plugins_tarball" && -f "$plugins_dir/packages.list" ]]; then
-  plugin_names="$(sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$plugins_dir/packages.list" | tr '\n' ' ')"
-  packages="$packages $plugin_names"
-fi
 # 去重
 packages="$(printf '%s\n' $packages | awk 'NF' | sort -u | tr '\n' ' ')"
 

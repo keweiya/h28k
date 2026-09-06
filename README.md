@@ -41,7 +41,7 @@
 
 ## 使用
 
-本仓库采用**三段式构建**（基础固件 / 插件包 / 定制固件分离，插件更新无需全量重编）：
+本仓库采用**两段式构建**（基础固件 / 定制固件分离，定制更新无需全量重编）：
 
 ```
 阶段 1 · 全量源码构建（慢，1.5~3 小时，手动触发）
@@ -49,16 +49,9 @@
   → 发布/覆盖更新 Base Release（tag = immortalwrt-h28k-base-v<版本>）：
     基础固件 + rootfs.tar.gz + 自建 ImageBuilder
 
-插件包 · SDK 独立编译（每周一凌晨 1:00 自动 + 可手动，约 15~30 分钟）
-  H28K 插件包构建：24.10-SNAPSHOT（出 ipk）与 25.12-SNAPSHOT（出 apk）
-    双系列快照 SDK 编译 nikki / fluent 主题等源码插件
-  → 汇总发布到唯一 Release（tag = openwrt-plugins，覆盖更新）：
-    packages-24.10-ipk.tar.gz / packages-25.12-apk.tar.gz + 各插件单独附件
-    （aarch64_generic 通用，不限设备与发行版）
-
 阶段 2 · 固件快速组装（快，约 5 分钟，随时手动触发）
-  H28K 固件快速组装：下载自建 ImageBuilder + 匹配版本的插件包
-  → 注入 IP/密码/主题/软件包 → make image 组装 → ABI 与阶段 1 完全一致
+  H28K 固件快速组装：下载自建 ImageBuilder
+  → 注入 IP/密码/软件包 → make image 组装 → ABI 与阶段 1 完全一致
   → 发布/覆盖更新 Custom Release（tag = immortalwrt-h28k-custom-v<版本>）
 
 周更 · 定时编译（每周四凌晨 2:00 自动触发，也可手动选单个滚动版本）
@@ -66,11 +59,10 @@
   → 基础固件 + 用 ImageBuilder 组装的定制固件（预装 ib-packages.list 插件）
   → 同发布到一个 Release（tag = immortalwrt-h28k-<版本>，默认 2G 根目录）
 
-每个版本最多三个 Release（base / packages / custom），重复构建原地覆盖更新，不会堆积；插件包另有一个不分版本的单 Release。除周更（周四）与插件包（周一）为定时触发外，其余工作流均可手动触发。日常使用请下载带 -custom 标识的定制固件。
+每个版本最多两个 Release（base / custom），重复构建原地覆盖更新，不会堆积。除周更（周四凌晨 2:00）为定时触发外，其余工作流均可手动触发。日常使用请下载带 -custom 标识的定制固件。
 ```
 
 - **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会补写 `repositories` 在线源清单并解除 standalone 门禁（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成也不加载），IB 本地没有的包组装时从官方源在线拉取；设备专属 kmod 随构建捆绑进 IB，官方 kmods 仓库缺的包也能本地安装，源清单里失效的 kmods 目录会在组装前自动重解析。
-- **插件包**：每周一凌晨 1:00（上海时间）自动构建，也可手动触发（无需选版本）。固定用 **24.10-SNAPSHOT（出 ipk）与 25.12-SNAPSHOT（出 apk）** 两个系列快照 SDK 编译 `config/source-plugins.list` 里启用的源码插件（**默认启用 nikki 代理与 fluent 主题**；想要纯净固件注释掉对应两行即可），编译后自动汇总发布到**唯一**的 Release（tag `openwrt-plugins`，覆盖更新；附件 `packages-24.10-ipk.tar.gz` / `packages-25.12-apk.tar.gz` + 各插件单独附件，名字不含固件版本号——**任意 aarch64_generic 架构的 OpenWrt/ImmortalWrt 设备都能用，不限 H28K**；同系列所有版本的组装自动注入，master 组装不含源码插件）。单个插件编译失败会自动跳过并在 Release 说明标注（不影响其余插件，全部失败才中止）；单系列失败时另一系列附件保留旧版。本工作流只编译发布插件包、不组装固件（nikki 等源码插件可能与其他插件有兼容问题，组装时机统一由「固件快速组装」掌控）。
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。首启开机默认（WAN 拨号/旁路由、主机名、Wi-Fi、中文界面、时区 NTP）在 `config/firmware.conf` 设置，仅作用于定制固件，设备上可随时改；其中 WAN 拨号与旁路由也可在组装/周更工作流输入框临时填写（留空 = 用 conf 值，旁路由网关不能与 LAN 地址相同）。
 - **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 
@@ -83,7 +75,6 @@ h28k-openwrt/
 ├── README.md
 ├── config/
 │   ├── firmware.conf                # 初始化参数（开放系列、all 默认集合、LAN IP、密码、根目录大小、主题、ABI 开关、首启默认：WAN 拨号/旁路由/主机名/Wi-Fi/中文/时区）
-│   ├── source-plugins.list          # 源码插件清单（唯一插件入口，默认全注释保持纯净）
 │   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
 │   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
 ├── patches/                         # 单层目录；命名 <序号>-<功能>-v<系列|精确版本|master>.patch
@@ -98,25 +89,23 @@ h28k-openwrt/
 │   ├── config.sh                    # 共享配置读取与校验（版本形态、参数覆盖）
 │   ├── resolve_versions.sh          # 版本选择 → 构建矩阵（all 在线枚举官方全部支持版本）
 │   ├── select_release.sh            # 版本解析：源码锁定（tag/revision）+ 补丁系列映射 + 官方 kmods 哈希
-│   ├── select_sdk.sh                # 解析官方 SDK 下载地址
-│   ├── select_ib.sh                 # 选基础 Release（IB 附件 + 匹配版本的插件包附件）
+│   ├── select_ib.sh                 # 选基础 Release（IB 附件）
 │   ├── ensure_ib_repositories.sh    # IB 在线源清单补写 + standalone 门禁解除 + kmods 源自愈
 │   ├── fetch_official_packages.sh   # 生成 ib-packages.list（在线枚举官方插件源包清单）
 │   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小/缺包自动剔除）
 │   ├── apply_patches.sh             # 按系列/精确版本后缀过滤并按字典序应用补丁
 │   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + vermagic 差量符号排除
-│   └── build_config.sh              # 参数注入、源码插件克隆、官方 kmod 源启用、ABI 校验
+│   └── build_config.sh              # 参数注入、官方 kmod 源启用、ABI 校验
 └── .github/workflows/
     ├── build-weekly.yml             # 周更：周四 02:00 定时编译 master + 双快照（基础+定制 同 Release）
     ├── build-base.yml               # 阶段 1：全量源码构建（单版本或 all 并行）→ Base Release
-    ├── build-packages.yml           # 插件包：官方 SDK 编译源码插件 → 独立 Packages Release
     └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）→ Custom Release
 ```
 
 ## 固件组件
 
 - **基础固件**（阶段 1 Release）：纯净官方组件（`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server`），**不含第三方插件**
-- **默认定制固件**（阶段 2 产物）：官方源包（见 `config/ib-packages.list`）+ 源码插件（`config/source-plugins.list` 默认启用的 nikki 代理与 fluent 主题——需先跑「构建插件包」产出对应版本的插件包）；不想要源码插件时注释掉重跑即可
+- **默认定制固件**（阶段 2 产物）：在基础固件之上追加 `config/ib-packages.list` 启用的官方源包
 
 ## 设备信息
 

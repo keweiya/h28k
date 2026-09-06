@@ -2,10 +2,7 @@
 
 # 定位指定版本的基础固件 Release（tag = immortalwrt-h28k-base-v<版本>，
 # 由「H28K 固件全量构建」发布）：
-#   - 校验其自建 ImageBuilder 附件（immortalwrt-v<版本>-h28k-base-imagebuilder-*.tar.zst）；
-#   - 解析该系列的插件包附件（packages-<系列>-<ipk|apk>.tar.gz，
-#     位于独立的单 Release tag = openwrt-plugins（不绑定设备/发行版），
-#     由「H28K 插件包构建」工作流发布，可能不存在）。
+#   - 校验其自建 ImageBuilder 附件（immortalwrt-v<版本>-h28k-base-imagebuilder-*.tar.zst）。
 # 需要 GH_TOKEN 环境变量（工作流中由 GitHub 提供）。
 
 set -euo pipefail
@@ -47,35 +44,12 @@ if [[ -z "$ib_url" ]]; then
   fail "Release $base_tag 存在但没有自建 ImageBuilder 附件（期望 ${ib_name}）。实际附件：${assets}。请重新运行「H28K 固件全量构建」工作流"
 fi
 
-# 3) 插件包附件（独立单 Release，可能尚未发布）：没有时留空（组装纯官方固件）
-#    单 Release tag = openwrt-plugins，附件按系列命名且不绑定设备/发行版
-#    （packages-<系列>-<ipk|apk>.tar.gz）：系列快照 SDK 编译的用户态包
-#    对同系列各点版本兼容，同一系列共用一份
-case "$version" in
-  master) pkg_series="master" ;;
-  *-SNAPSHOT) pkg_series="${version%-SNAPSHOT}" ;;
-  *) pkg_series="${version%.*}" ;;
-esac
-case "$pkg_series" in
-  24.10) pkg_fmt="ipk" ;;
-  *) pkg_fmt="apk" ;;
-esac
-pkg_tag="openwrt-plugins"
-pkg_name="packages-${pkg_series}-${pkg_fmt}.tar.gz"
-pkg_urls="$(gh api "repos/{owner}/{repo}/releases/tags/$pkg_tag" --jq \
-  '.assets[] | select(.name == "'"${pkg_name}"'") | .browser_download_url' \
-  2>/dev/null)" || pkg_urls=""
-pkg_url="${pkg_urls%%$'\n'*}"
-if [[ -z "$pkg_url" ]]; then
-  echo "注意：未找到 $pkg_series 系列的插件包附件（$pkg_tag），将组装不含源码插件的固件（可在 config/source-plugins.list 启用插件后运行「H28K 插件包构建」工作流）" >&2
-fi
 
 {
   echo "tag=$base_tag"
   echo "url=$ib_url"
   echo "version=$version"
   echo "rel_suffix=$rel_suffix"
-  echo "packages_url=$pkg_url"
 } >> "$github_output"
 
 echo "Selected base release: $base_tag"

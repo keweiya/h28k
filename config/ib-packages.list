@@ -2,7 +2,7 @@
 # 用法：=y 安装进固件，=n 不安装；启用插件时建议把它配对的 luci-i18n-*-zh-cn 一并改为 =y（中文界面）
 # 移除官方默认自带的包：行首加 -（如 -uhttpd），从默认包集中剔除；清单内未启用的包无需此语法（保持 =n 即可）
 # 没有列出的冷门插件：完整目录可用 scripts/fetch_official_packages.sh 生成后查找
-# 源码第三方插件（nikki 等）见 config/source-plugins.list；kmod/base 包在文件末尾"清单外"小节
+# kmod/base 包在文件末尾"清单外"小节
 
 # === 中文界面（默认开启）===
 luci-i18n-base-zh-cn=y

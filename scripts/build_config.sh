@@ -78,42 +78,10 @@ check_abi() {
   fi
 }
 
-# 解析源码插件清单（config/source-plugins.list）：
-# 执行其中的 clone: 行（把源码克隆进 SDK 源码树），并把要编译的包名打印到 stdout。
-run_source_plugins() {
-  local sdk_dir="$1" list_file="$2" line cmd name
-  local -a command names=()
-  [[ -d "$sdk_dir" ]] || fail "SDK directory not found: $sdk_dir"
-  [[ -f "$list_file" ]] || fail "source plugins list not found: $list_file"
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'\r'}"
-    line="$(trim "$line")"
-    [[ -z "$line" || "$line" == \#* ]] && continue
-    if [[ "$line" == clone:* ]]; then
-      cmd="$(trim "${line#clone:}")"
-      read -r -a command <<< "$cmd"
-      [[ "${command[0]:-}" == git && "${command[1]:-}" == clone ]] ||
-        fail "clone lines must be git clone commands: $line"
-      (cd "$sdk_dir" && "${command[@]}")
-    else
-      names+=("$line")
-    fi
-  done < "$list_file"
-
-  for name in "${names[@]}"; do
-    printf '%s\n' "$name"
-  done
-}
-
 case "${1:-}" in
   prepare)
     [[ $# -eq 4 || $# -eq 5 ]] || fail "usage: $0 prepare <source-dir> <firmware.conf> <github-env> [kind]"
     prepare "$2" "$3" "$4" "${5:-release}"
-    ;;
-  source-plugins)
-    [[ $# -eq 3 ]] || fail "usage: $0 source-plugins <sdk-dir> <source-plugins.list>"
-    run_source_plugins "$2" "$3"
     ;;
   check-abi)
     [[ $# -eq 6 ]] || fail "usage: $0 check-abi <source-dir> <firmware.conf> <version> <tag> <kmods-directory>"

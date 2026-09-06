@@ -99,7 +99,7 @@ jobs:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
-      - name: 选择基础 Release 与插件包
+      - name: 选择基础 Release
         id: base
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -108,15 +108,9 @@ jobs:
             "${{ matrix.version }}" \
             "$GITHUB_OUTPUT"
 
-      - name: 下载 ImageBuilder 与插件包
+      - name: 下载 ImageBuilder
         run: |
           curl -fsSL --retry 3 "${{ steps.base.outputs.url }}" -o ib.tar.zst
-          if [[ -n "${{ steps.base.outputs.packages_url }}" ]]; then
-            curl -fsSL --retry 3 "${{ steps.base.outputs.packages_url }}" -o plugins.tar.gz
-            echo "PLUGINS_ARG=plugins.tar.gz" >> "$GITHUB_ENV"
-          else
-            echo "PLUGINS_ARG=" >> "$GITHUB_ENV"
-          fi
 
       - name: 组装定制固件
         env:
@@ -133,7 +127,6 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "$PLUGINS_ARG" \
             "${{ matrix.version }}"
 
       - name: 整理并重命名定制产物（剔除重复包，增加 custom 与版本号）

@@ -116,7 +116,7 @@ done < <(printf '%s\n' "$buildinfo")
   echo "# 上游版本：$version；覆盖源：${feeds_done[*]}"
   echo "# 用法：把要安装的包改为 =y，不安装保持 =n；# 开头为注释"
   echo "# 重新生成会保留你已启用（=y）的包，新增包默认 =n"
-  echo "# 注意：kmod-* 由 targets 的 kmods 源提供，不在此清单；官方源没有的源码插件见 config/source-plugins.list"
+  echo "# 注意：kmod-* 由 targets 的 kmods 源提供，不在此清单"
   mapfile -t sorted < <(printf '%s\n' "${names[@]}" | sort -u)
   echo "# === 官方插件源包（feeds：${feeds_done[*]}）==="
   for n in "${sorted[@]}"; do

@@ -258,10 +258,18 @@ jobs:
           - **基于底包**：ImmortalWrt ${{ steps.release.outputs.revision }}
           - **已包含插件**：$(cat stage/packages.list | tr '\n' ' ')
           ${FAILED_LINE}
-          - **附件内容**：\`${{ env.PKG_FILE }}\`（解压包含全部预编译 .ipk / .apk 及依赖）"
+          - **附件内容**：\`${{ env.PKG_FILE }}\` 为整包（组装阶段自动注入用，含 packages.list 清单）；其余 .apk/.ipk 为各插件单独附件，可按需手动下载"
 
-          # 直接替换：删除旧 Release 与 tag 后整体重建
+          shopt -s nullglob
+          # 整包（自动注入用）+ 各插件单独附件
+          FILES=("${{ env.PKG_FILE }}")
+          for f in stage/*.apk stage/*.ipk; do
+            FILES+=("$f")
+          done
+          echo "=== 发布附件（${#FILES[@]} 个）==="
+          ls -lh "${FILES[@]}"
+
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push origin :refs/tags/"$TAG" 2>/dev/null || true
           # 插件包是独立 Release，不参与 Latest 竞争（Latest 保持给最新正式版固件）
-          gh release create "$TAG" "${{ env.PKG_FILE }}" --title "$TITLE" --notes "$NOTES" --latest=false
+          gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false

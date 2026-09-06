@@ -11,6 +11,18 @@ trim() {
   printf '%s' "$value"
 }
 
+# 校验 IPv4 地址格式与各字节范围
+ipv4_ok() {
+  local ip="$1"
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local o
+  local -a parts=()
+  IFS=. read -r -a parts <<< "$ip"
+  for o in "${parts[@]}"; do
+    (( 10#$o <= 255 )) || return 1
+  done
+}
+
 # 判断版本是否在 supported_versions 白名单内。
 # 调用前必须已经执行过 load_firmware_config。
 version_in_list() {
@@ -83,8 +95,7 @@ rel_suffix_of() {
 }
 
 load_firmware_config() {
-  local file="$1" key value octet
-  local -a octets
+  local file="$1" key value
   [[ -f "$file" ]] || fail "config file not found: $file"
 
   default_series=""
@@ -96,6 +107,15 @@ load_firmware_config() {
   rootfs_size=""
   default_theme=""
   check_official_abi=true
+  hostname=""
+  pppoe_user=""
+  pppoe_password=""
+  bypass_gateway=""
+  wifi_ssid=""
+  wifi_password=""
+  luci_lang=""
+  timezone=""
+  ntp_servers=""
 
   while IFS='=' read -r key value || [[ -n "$key" ]]; do
     key="$(trim "${key%$'\r'}")"
@@ -113,6 +133,15 @@ load_firmware_config() {
       rootfs_size) rootfs_size="$value" ;;
       default_theme) default_theme="$value" ;;
       check_official_abi) check_official_abi="$value" ;;
+      hostname) hostname="$value" ;;
+      pppoe_user) pppoe_user="$value" ;;
+      pppoe_password) pppoe_password="$value" ;;
+      bypass_gateway) bypass_gateway="$value" ;;
+      wifi_ssid) wifi_ssid="$value" ;;
+      wifi_password) wifi_password="$value" ;;
+      luci_lang) luci_lang="$value" ;;
+      timezone) timezone="$value" ;;
+      ntp_servers) ntp_servers="$value" ;;
       *) fail "unknown config key: $key" ;;
     esac
   done < "$file"
@@ -154,15 +183,39 @@ load_firmware_config() {
     fail "rootfs_size must be 256..4096 MiB: $rootfs_size"
 
   [[ -n "$lan_ip" ]] || fail "lan_ip is required"
-  [[ "$lan_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] ||
-    fail "invalid lan_ip: $lan_ip"
-  IFS=. read -r -a octets <<< "$lan_ip"
-  for octet in "${octets[@]}"; do
-    (( 10#$octet <= 255 )) || fail "invalid lan_ip: $lan_ip"
-  done
+  ipv4_ok "$lan_ip" || fail "invalid lan_ip: $lan_ip"
   [[ -n "$password" ]] || fail "password is required"
   [[ -z "$default_theme" || "$default_theme" =~ ^[A-Za-z0-9_-]+$ ]] ||
     fail "invalid default_theme: $default_theme"
   [[ "$check_official_abi" == true || "$check_official_abi" == false ]] ||
     fail "check_official_abi must be true or false"
+
+  # 首启默认配置校验（全部可留空 = 跳过）
+  [[ -z "$hostname" || "$hostname" =~ ^[A-Za-z0-9_-]+$ ]] ||
+    fail "invalid hostname: $hostname"
+  if [[ -n "$pppoe_user" || -n "$pppoe_password" ]]; then
+    [[ -n "$pppoe_user" && -n "$pppoe_password" ]] ||
+      fail "pppoe_user 与 pppoe_password 需同时填写（留空则保持 DHCP）"
+    case "$pppoe_user$pppoe_password" in
+      *"'"*|*'"'*|*\\*) fail "pppoe 账号/密码不能包含引号或反斜杠" ;;
+    esac
+  fi
+  [[ -z "$bypass_gateway" ]] || ipv4_ok "$bypass_gateway" ||
+    fail "invalid bypass_gateway: $bypass_gateway"
+  [[ -z "$pppoe_user" || -z "$bypass_gateway" ]] ||
+    fail "pppoe_user 与 bypass_gateway 互斥：拨号与旁路由只能二选一"
+  if [[ -n "$wifi_ssid" ]]; then
+    (( ${#wifi_password} >= 8 )) ||
+      fail "wifi_password 至少 8 位（WPA2 要求）：当前 ${#wifi_password} 位"
+  else
+    [[ -z "$wifi_password" ]] || fail "填写了 wifi_password 但 wifi_ssid 为空"
+  fi
+  [[ -z "$luci_lang" || "$luci_lang" =~ ^[a-z]{2}(_[A-Za-z]{2,5})?$ ]] ||
+    fail "invalid luci_lang: $luci_lang"
+  [[ -z "$timezone" || "$timezone" =~ ^[A-Za-z0-9_+-]+$ ]] ||
+    fail "invalid timezone: $timezone"
+  local ntp
+  for ntp in $ntp_servers; do
+    [[ "$ntp" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid ntp server: $ntp"
+  done
 }

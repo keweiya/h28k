@@ -23,6 +23,79 @@ ib_version="${6:-}"
 
 load_firmware_config "$config_file"
 
+# 单引号转义：生成的首启脚本在设备上由 sh source 执行，值里的单引号需按
+# '\'' 处理（PPPoE 密码等用户输入不可假设无特殊字符）
+shq() { printf '%s' "$1" | sed -e "s/'/'\\\\''/g"; }
+
+# 生成首启 uci-defaults 脚本（写入 $1）。
+# 时序保证：boot(START=10) 内联先跑 kmodloader（USB 网卡驱动加载），
+# 再 /sbin/wifi config 生成 radio0 段，最后才应用本脚本——因此可直接
+# 开启 Wi-Fi。所有配置值留空时跳过对应设置（WAN 模式二选一由 config.sh
+# 校验互斥：PPPoE 优先判定）。
+gen_uci_defaults() {
+  local target="$1" s
+  {
+    echo "uci set network.lan.ipaddr='$(shq "$lan_ip")'"
+    echo "uci commit network"
+    if [[ -n "$hostname" ]]; then
+      echo "uci set system.@system[0].hostname='$(shq "$hostname")'"
+    fi
+    if [[ -n "$timezone" ]]; then
+      echo "uci set system.@system[0].zonename='Asia/Shanghai'"
+      echo "uci set system.@system[0].timezone='$(shq "$timezone")'"
+    fi
+    if [[ -n "$ntp_servers" ]]; then
+      echo "uci -q delete system.ntp"
+      echo "uci set system.ntp='timeserver'"
+      echo "uci set system.ntp.enabled='1'"
+      echo "uci set system.ntp.enable_server='0'"
+      for s in $ntp_servers; do
+        echo "uci add_list system.ntp.server='$(shq "$s")'"
+      done
+    fi
+    echo "uci commit system"
+    if [[ -n "$pppoe_user" ]]; then
+      echo "uci set network.wan.proto='pppoe'"
+      echo "uci set network.wan.username='$(shq "$pppoe_user")'"
+      echo "uci set network.wan.password='$(shq "$pppoe_password")'"
+      echo "uci commit network"
+    elif [[ -n "$bypass_gateway" ]]; then
+      echo "uci set network.lan.gateway='$(shq "$bypass_gateway")'"
+      echo "uci -q delete network.lan.dns"
+      echo "uci add_list network.lan.dns='$(shq "$bypass_gateway")'"
+      echo "uci commit network"
+      echo "uci set dhcp.lan.ignore='1'"
+      echo "uci commit dhcp"
+    fi
+    if [[ -n "$wifi_ssid" ]]; then
+      echo 'if uci -q get wireless.radio0 >/dev/null; then'
+      echo "  uci set wireless.radio0.disabled='0'"
+      echo '  if uci -q get wireless.default_radio0 >/dev/null; then'
+      echo "    uci set wireless.default_radio0.ssid='$(shq "$wifi_ssid")'"
+      echo "    uci set wireless.default_radio0.encryption='psk2'"
+      echo "    uci set wireless.default_radio0.key='$(shq "$wifi_password")'"
+      echo "    uci set wireless.default_radio0.network='lan'"
+      echo '  fi'
+      echo '  uci commit wireless'
+      echo 'fi'
+    fi
+    if [[ -n "$luci_lang" || -n "$default_theme" ]]; then
+      echo 'if uci -q get luci.main >/dev/null; then'
+      if [[ -n "$luci_lang" ]]; then
+        echo "  uci set luci.main.lang='$(shq "$luci_lang")'"
+      fi
+      if [[ -n "$default_theme" ]]; then
+        echo "  uci set luci.main.theme='$(shq "$default_theme")'"
+      fi
+      echo '  uci commit luci'
+      echo 'fi'
+    fi
+    # 首启写入 root 密码（构建期生成哈希，设备上无需 openssl）。
+    # sed 程序必须用单引号：哈希含 $6$salt$ 字样，双引号会在设备首启时被 shell 展开。
+    echo "sed -i 's|^root:[^:]*:|root:${password_hash}:|' /etc/shadow"
+  } > "$target"
+}
+
 # 后续会 cd 进 ImageBuilder 目录，先把所有路径转为绝对路径
 [[ -d "$out_dir" ]] || mkdir -p "$out_dir"
 packages_list="$(cd "$(dirname -- "$packages_list")" && pwd)/$(basename -- "$packages_list")"
@@ -61,20 +134,10 @@ if [[ -n "$plugins_tarball" ]]; then
   echo "    ImageBuilder 本地包数量: $ipk_num"
 fi
 
-echo "=== 生成首启配置（IP/密码/主题） ==="
+echo "=== 生成首启配置（IP/密码/主题/WAN 模式/主机名/Wi-Fi/语言/时区） ==="
 password_hash="$(printf '%s\n' "$password" | openssl passwd -6 -stdin)"
 mkdir -p files/etc/uci-defaults
-{
-  echo "uci set network.lan.ipaddr='$lan_ip'"
-  echo "uci commit network"
-  if [[ -n "$default_theme" ]]; then
-    echo "uci set luci.main.theme='$default_theme'"
-    echo "uci commit luci"
-  fi
-  # 首启写入 root 密码（构建期生成哈希，设备上无需 openssl）。
-  # sed 程序必须用单引号：哈希含 $6$salt$ 字样，双引号会在设备首启时被 shell 展开。
-  echo "sed -i 's|^root:[^:]*:|root:${password_hash}:|' /etc/shadow"
-} > files/etc/uci-defaults/99-h28k-setup
+gen_uci_defaults "$ib_dir/files/etc/uci-defaults/99-h28k-setup"
 chmod +x files/etc/uci-defaults/99-h28k-setup
 
 # 包列表格式：每行"包名=y"（安装）或"包名=n"（不安装），裸包名等同 =y，# 注释

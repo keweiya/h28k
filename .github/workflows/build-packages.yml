@@ -165,12 +165,17 @@ jobs:
           else
             cp plugin-names.txt stage/packages.list
           fi
-          # 系列级命名（不带固件版本号）：24.10-SNAPSHOT → 24.10，25.12-SNAPSHOT → 25.12
+          # 系列级命名（不带固件版本号，也不绑定设备/发行版）：
+          # 24.10-SNAPSHOT → 24.10（ipk），25.12-SNAPSHOT → 25.12（apk）
           V="${{ matrix.version }}"
           V="${V%-SNAPSHOT}"
+          case "$V" in
+            24.10) fmt=ipk ;;
+            *) fmt=apk ;;
+          esac
           # tar 先写到 stage 外再移入，避免"边打包边写自身"
-          tar -czf "immortalwrt-${V}-h28k-packages.tar.gz" -C stage .
-          mv "immortalwrt-${V}-h28k-packages.tar.gz" stage/
+          tar -czf "packages-${V}-${fmt}.tar.gz" -C stage .
+          mv "packages-${V}-${fmt}.tar.gz" stage/
           ls -lh stage/
 
       - name: 上传构建产物（供发布 job 汇总到单 Release）
@@ -185,7 +190,7 @@ jobs:
         if: steps.plugins.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: immortalwrt-${{ matrix.version }}-h28k-packages-logs-${{ github.run_number }}
+          name: openwrt-plugins-logs-${{ matrix.version }}-${{ github.run_number }}
           path: |
             sdk/build.log
             sdk/build-single.log
@@ -200,7 +205,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAG: immortalwrt-h28k-packages
+      TAG: openwrt-plugins
     steps:
       - name: 检出支持仓库（删除旧 tag 需要 git 仓库）
         uses: actions/checkout@v4
@@ -213,7 +218,7 @@ jobs:
       - name: 整理附件与发布说明
         run: |
           mkdir -p release_files
-          find artifacts -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*-h28k-packages.tar.gz' \) \
+          find artifacts -type f \( -name '*.apk' -o -name '*.ipk' -o -name 'packages-*.tar.gz' \) \
             -exec cp -f {} release_files/ \;
           count=$(find release_files -type f | wc -l)
           [ "$count" -gt 0 ] || { echo "没有任何插件产物可发布"; exit 1; }
@@ -237,18 +242,19 @@ jobs:
             done < "$fl"
           done
 
-          TITLE="ImmortalWrt H28K 插件包（ipk + apk）"
-          NOTES="## ImmortalWrt H28K 插件包（ipk + apk，单 Release 覆盖更新）
+          TITLE="OpenWrt 插件包（ipk + apk，aarch64_generic）"
+          NOTES="## OpenWrt 插件包（ipk + apk，aarch64_generic，单 Release 覆盖更新）
 
-          - **组件类型**：源码插件独立编译包（供组装定制固件注入，组装时按系列自动选取）
-          - **编译基准**：24.10-SNAPSHOT 快照 SDK（ipk）/ 25.12-SNAPSHOT 快照 SDK（apk），
+          - **组件类型**：源码插件独立编译包（供 OpenWrt/ImmortalWrt 直接安装或组装配方使用）
+          - **适用范围**：任意 **aarch64_generic**（AArch64 通用）架构的 OpenWrt/ImmortalWrt
+            设备，不限型号——24.10 系（opkg）安装 ipk，25.12 系（apk）安装 apk；
             用户态包对同系列各点版本兼容
+          - **编译基准**：24.10-SNAPSHOT / 25.12-SNAPSHOT 系列快照 SDK
           - **已包含插件**：$PLUGINS
-          - **24.10 系附件**：\`immortalwrt-24.10-h28k-packages.tar.gz\` 及各插件单独 .ipk
-          - **25.12 系附件**：\`immortalwrt-25.12-h28k-packages.tar.gz\` 及各插件单独 .apk
+          - **附件**：\`packages-24.10-ipk.tar.gz\`、\`packages-25.12-apk.tar.gz\`（整包）
+            及各插件单独附件
           ${FAILED_ALL}
-          - **更新方式**：每周一凌晨 1:00（上海时间）自动构建并覆盖更新本 Release；
-            插件包名不含固件版本号"
+          - **更新方式**：每周一凌晨 1:00（上海时间）自动构建并覆盖更新本 Release"
 
           # 非破坏性覆盖：同名附件 clobber 更新，单系列失败时另一系列的旧附件保留
           if gh release view "$TAG" >/dev/null 2>&1; then

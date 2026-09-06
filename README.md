@@ -52,8 +52,9 @@
 插件包 · SDK 独立编译（每周一凌晨 1:00 自动 + 可手动，约 15~30 分钟）
   H28K 插件包构建：24.10-SNAPSHOT（出 ipk）与 25.12-SNAPSHOT（出 apk）
     双系列快照 SDK 编译 nikki / fluent 主题等源码插件
-  → 汇总发布到唯一 Packages Release（tag = immortalwrt-h28k-packages，覆盖更新）：
-    两系列的整包 tar.gz + 各插件单独附件，名字不含固件版本号
+  → 汇总发布到唯一 Release（tag = openwrt-plugins，覆盖更新）：
+    packages-24.10-ipk.tar.gz / packages-25.12-apk.tar.gz + 各插件单独附件
+    （aarch64_generic 通用，不限设备与发行版）
 
 阶段 2 · 固件快速组装（快，约 5 分钟，随时手动触发）
   H28K 固件快速组装：下载自建 ImageBuilder + 匹配版本的插件包
@@ -69,7 +70,7 @@
 ```
 
 - **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会补写 `repositories` 在线源清单并解除 standalone 门禁（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成也不加载），IB 本地没有的包组装时从官方源在线拉取；设备专属 kmod 随构建捆绑进 IB，官方 kmods 仓库缺的包也能本地安装，源清单里失效的 kmods 目录会在组装前自动重解析。
-- **插件包**：每周一凌晨 1:00（上海时间）自动构建，也可手动触发（无需选版本）。固定用 **24.10-SNAPSHOT（出 ipk）与 25.12-SNAPSHOT（出 apk）** 两个系列快照 SDK 编译 `config/source-plugins.list` 里启用的源码插件（**默认启用 nikki 代理与 fluent 主题**；想要纯净固件注释掉对应两行即可），编译后自动汇总发布到**唯一**的 Packages Release（tag `immortalwrt-h28k-packages`，覆盖更新；附件按系列命名且不含固件版本号，同系列所有版本的组装自动注入，master 组装不含源码插件）。单个插件编译失败会自动跳过并在 Release 说明标注（不影响其余插件，全部失败才中止）；单系列失败时另一系列附件保留旧版。本工作流只编译发布插件包、不组装固件（nikki 等源码插件可能与其他插件有兼容问题，组装时机统一由「固件快速组装」掌控）。
+- **插件包**：每周一凌晨 1:00（上海时间）自动构建，也可手动触发（无需选版本）。固定用 **24.10-SNAPSHOT（出 ipk）与 25.12-SNAPSHOT（出 apk）** 两个系列快照 SDK 编译 `config/source-plugins.list` 里启用的源码插件（**默认启用 nikki 代理与 fluent 主题**；想要纯净固件注释掉对应两行即可），编译后自动汇总发布到**唯一**的 Release（tag `openwrt-plugins`，覆盖更新；附件 `packages-24.10-ipk.tar.gz` / `packages-25.12-apk.tar.gz` + 各插件单独附件，名字不含固件版本号——**任意 aarch64_generic 架构的 OpenWrt/ImmortalWrt 设备都能用，不限 H28K**；同系列所有版本的组装自动注入，master 组装不含源码插件）。单个插件编译失败会自动跳过并在 Release 说明标注（不影响其余插件，全部失败才中止）；单系列失败时另一系列附件保留旧版。本工作流只编译发布插件包、不组装固件（nikki 等源码插件可能与其他插件有兼容问题，组装时机统一由「固件快速组装」掌控）。
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。首启开机默认（WAN 拨号/旁路由、主机名、Wi-Fi、中文界面、时区 NTP）在 `config/firmware.conf` 设置，仅作用于定制固件，设备上可随时改；其中 WAN 拨号与旁路由也可在组装/周更工作流输入框临时填写（留空 = 用 conf 值，旁路由网关不能与 LAN 地址相同）。
 - **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 

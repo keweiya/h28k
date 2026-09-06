@@ -1,13 +1,10 @@
-name: H28K 插件包构建（24.10 出 ipk / 25.12 出 apk，按系列发布）
+name: H28K 插件包构建（24.10 出 ipk / 25.12 出 apk，单 Release 覆盖更新）
 
 on:
+  schedule:
+    # UTC 周日 17:00 = 上海时间周一凌晨 01:00（与周更固件同为上海时间）
+    - cron: '0 17 * * 0'
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: '发布插件包为 Release'
-        type: boolean
-        required: true
-        default: true
 
 permissions:
   contents: write
@@ -17,13 +14,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  packages:
+  build:
     name: 编译 ${{ matrix.version }} 插件包
     strategy:
       fail-fast: false
       # 固定使用两个系列滚动快照的官方 SDK：24.10 出 ipk、25.12 出 apk。
-      # 插件包按系列发布（不带固件版本号），同系列全部版本的组装共用；
-      # 快照 SDK 编译的用户态包对同系列各点版本兼容
+      # 插件包名不含固件版本号，同系列全部版本的组装共用；快照 SDK 编译
+      # 的用户态包对同系列各点版本兼容
       matrix:
         version:
           - 24.10-SNAPSHOT
@@ -156,39 +153,33 @@ jobs:
 
       - name: 收集插件包并标准化重命名
         if: steps.plugins.outputs.built == 'true'
+        working-directory: sdk
         run: |
           mkdir -p stage
-          find sdk/bin/packages \( -name '*.ipk' -o -name '*.apk' \) ! -name 'kmod-*' -exec cp {} stage/ \;
+          find bin/packages \( -name '*.ipk' -o -name '*.apk' \) ! -name 'kmod-*' -exec cp {} stage/ \;
           # packages.list 只保留编译成功的包：失败包若留在清单里，组装阶段
           # 会尝试安装不存在的包（触发逐包降级拖慢甚至预检剔除）
-          if [ -s sdk/failed-packages.txt ]; then
-            grep -vxFf sdk/failed-packages.txt sdk/plugin-names.txt > stage/packages.list
-            cp sdk/failed-packages.txt stage/failed-packages.list
+          if [ -s failed-packages.txt ]; then
+            grep -vxFf failed-packages.txt plugin-names.txt > stage/packages.list
+            cp failed-packages.txt stage/failed-packages.list
           else
-            cp sdk/plugin-names.txt stage/packages.list
-          fi
-          count=$(find stage \( -name '*.ipk' -o -name '*.apk' \) | wc -l)
-          if [ "$count" -eq 0 ]; then
-            echo "没有收集到任何插件包"
-            exit 1
+            cp plugin-names.txt stage/packages.list
           fi
           # 系列级命名（不带固件版本号）：24.10-SNAPSHOT → 24.10，25.12-SNAPSHOT → 25.12
           V="${{ matrix.version }}"
           V="${V%-SNAPSHOT}"
-          PKG_NAME="immortalwrt-${V}-h28k-packages.tar.gz"
-          tar -czf "$PKG_NAME" -C stage .
-          echo "PKG_FILE=$PKG_NAME" >> "$GITHUB_ENV"
-          echo "PKG_TAG=immortalwrt-h28k-packages-$V" >> "$GITHUB_ENV"
-          echo "PKG_VERSION_SUFFIX=$V" >> "$GITHUB_ENV"
-          ls -lh "$PKG_NAME"
+          # tar 先写到 stage 外再移入，避免"边打包边写自身"
+          tar -czf "immortalwrt-${V}-h28k-packages.tar.gz" -C stage .
+          mv "immortalwrt-${V}-h28k-packages.tar.gz" stage/
+          ls -lh stage/
 
-      - name: 上传插件包构件
+      - name: 上传构建产物（供发布 job 汇总到单 Release）
         if: steps.plugins.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: immortalwrt-${{ matrix.version }}-h28k-packages-${{ github.run_number }}
-          path: ${{ env.PKG_FILE }}
-          retention-days: 30
+          name: pkg-${{ matrix.version }}
+          path: sdk/stage/
+          retention-days: 3
 
       - name: 上传编译日志与失败清单
         if: steps.plugins.outputs.built == 'true'
@@ -202,41 +193,70 @@ jobs:
           if-no-files-found: ignore
           retention-days: 15
 
-      - name: 发布插件包 Release（独立 Packages Release）
-        if: inputs.publish_release && steps.plugins.outputs.built == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish:
+    name: 发布插件包 Release（单 Release 覆盖更新）
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: immortalwrt-h28k-packages
+    steps:
+      - name: 检出支持仓库（删除旧 tag 需要 git 仓库）
+        uses: actions/checkout@v4
+
+      - name: 汇总两个系列的构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 整理附件与发布说明
         run: |
-          TAG="${{ env.PKG_TAG }}"
-          TITLE="ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}"
-          # 编译失败的包如实标注（packages.list 已剔除，不会进入组装安装清单）
-          FAILED_LINE=''
-          if [ -s stage/failed-packages.list ]; then
-            FAILED_LINE='- **⚠ 以下插件编译失败，本次未包含**：'
+          mkdir -p release_files
+          find artifacts -type f \( -name '*.apk' -o -name '*.ipk' -o -name '*-h28k-packages.tar.gz' \) \
+            -exec cp -f {} release_files/ \;
+          count=$(find release_files -type f | wc -l)
+          [ "$count" -gt 0 ] || { echo "没有任何插件产物可发布"; exit 1; }
+
+          PLIST="$(find artifacts -name packages.list -type f | head -n1)"
+          PLUGINS='（无）'
+          [ -n "$PLIST" ] && PLUGINS="$(tr '\n' ' ' < "$PLIST")"
+
+          # 各系列编译失败的包如实标注（packages.list 已剔除，不会进入组装安装清单）
+          FAILED_ALL=''
+          for fl in $(find artifacts -name failed-packages.list -type f); do
+            [ -s "$fl" ] || continue
+            series_dir="$(basename "$(dirname "$fl")")"
+            series="${series_dir#pkg-}"
+            FAILED_ALL="$FAILED_ALL
+          - **⚠ ${series} 系编译失败，本次未包含**："
             while IFS= read -r p; do
               [ -n "$p" ] || continue
-              FAILED_LINE="$FAILED_LINE
+              FAILED_ALL="$FAILED_ALL
             - $p"
-            done < stage/failed-packages.list
-          fi
-          NOTES="## ImmortalWrt H28K 插件包 ${{ env.PKG_VERSION_SUFFIX }}
-
-          - **组件类型**：源码插件独立编译包（供组装定制固件注入）
-          - **基于底包**：ImmortalWrt ${{ steps.release.outputs.revision }}
-          - **已包含插件**：$(cat stage/packages.list | tr '\n' ' ')
-          ${FAILED_LINE}
-          - **附件内容**：\`${{ env.PKG_FILE }}\` 为整包（组装阶段自动注入用，含 packages.list 清单）；其余 .apk/.ipk 为各插件单独附件，可按需手动下载"
-
-          shopt -s nullglob
-          # 整包（自动注入用）+ 各插件单独附件
-          FILES=("${{ env.PKG_FILE }}")
-          for f in stage/*.apk stage/*.ipk; do
-            FILES+=("$f")
+            done < "$fl"
           done
-          echo "=== 发布附件（${#FILES[@]} 个）==="
-          ls -lh "${FILES[@]}"
 
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          git push origin :refs/tags/"$TAG" 2>/dev/null || true
-          # 插件包是独立 Release，不参与 Latest 竞争（Latest 保持给最新正式版固件）
-          gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false
+          TITLE="ImmortalWrt H28K 插件包（ipk + apk）"
+          NOTES="## ImmortalWrt H28K 插件包（ipk + apk，单 Release 覆盖更新）
+
+          - **组件类型**：源码插件独立编译包（供组装定制固件注入，组装时按系列自动选取）
+          - **编译基准**：24.10-SNAPSHOT 快照 SDK（ipk）/ 25.12-SNAPSHOT 快照 SDK（apk），
+            用户态包对同系列各点版本兼容
+          - **已包含插件**：$PLUGINS
+          - **24.10 系附件**：\`immortalwrt-24.10-h28k-packages.tar.gz\` 及各插件单独 .ipk
+          - **25.12 系附件**：\`immortalwrt-25.12-h28k-packages.tar.gz\` 及各插件单独 .apk
+          ${FAILED_ALL}
+          - **更新方式**：每周一凌晨 1:00（上海时间）自动构建并覆盖更新本 Release；
+            插件包名不含固件版本号"
+
+          # 非破坏性覆盖：同名附件 clobber 更新，单系列失败时另一系列的旧附件保留
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release_files/* --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" release_files/* --title "$TITLE" \
+              --notes "$NOTES" --latest=false
+          fi
+          echo "=== 已发布 $TAG ==="
+          gh release view "$TAG" --json assets --jq '.assets[].name'

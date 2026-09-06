@@ -4,8 +4,8 @@
 # 由「H28K 固件全量构建」发布）：
 #   - 校验其自建 ImageBuilder 附件（immortalwrt-v<版本>-h28k-base-imagebuilder-*.tar.zst）；
 #   - 解析该系列的插件包附件（immortalwrt-<系列>-h28k-packages.tar.gz，
-#     位于独立的 tag = immortalwrt-h28k-packages-<系列> Release（按系列发布、
-#     不带固件版本号），由「H28K 插件包构建」工作流发布，可能不存在）。
+#     位于独立的单 Release tag = immortalwrt-h28k-packages（附件按系列命名），
+#     由「H28K 插件包构建」工作流发布，可能不存在）。
 # 需要 GH_TOKEN 环境变量（工作流中由 GitHub 提供）。
 
 set -euo pipefail
@@ -47,15 +47,16 @@ if [[ -z "$ib_url" ]]; then
   fail "Release $base_tag 存在但没有自建 ImageBuilder 附件（期望 ${ib_name}）。实际附件：${assets}。请重新运行「H28K 固件全量构建」工作流"
 fi
 
-# 3) 插件包附件（独立 Packages Release，可能尚未发布）：没有时留空（组装纯官方固件）
-#    插件包按系列发布（tag = immortalwrt-h28k-packages-<系列>，不带固件版本号）：
-#    用系列快照 SDK 编译的用户态包对同系列各点版本兼容，同一系列共用一份
+# 3) 插件包附件（独立单 Release，可能尚未发布）：没有时留空（组装纯官方固件）
+#    单 Release tag = immortalwrt-h28k-packages，附件按系列命名
+#    （immortalwrt-<系列>-h28k-packages.tar.gz）：系列快照 SDK 编译的用户态包
+#    对同系列各点版本兼容，同一系列共用一份
 case "$version" in
   master) pkg_series="master" ;;
   *-SNAPSHOT) pkg_series="${version%-SNAPSHOT}" ;;
   *) pkg_series="${version%.*}" ;;
 esac
-pkg_tag="immortalwrt-h28k-packages-$pkg_series"
+pkg_tag="immortalwrt-h28k-packages"
 pkg_name="immortalwrt-${pkg_series}-h28k-packages.tar.gz"
 pkg_urls="$(gh api "repos/{owner}/{repo}/releases/tags/$pkg_tag" --jq \
   '.assets[] | select(.name == "'"${pkg_name}"'") | .browser_download_url' \

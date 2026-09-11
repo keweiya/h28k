@@ -294,7 +294,6 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "" \
             "${{ steps.release.outputs.version }}"
 
       - name: 收集基础+定制产物（同发布到一个 Release）

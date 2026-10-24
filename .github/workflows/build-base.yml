@@ -59,6 +59,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       versions: ${{ steps.filter.outputs.versions }}
+      has_build: ${{ steps.filter.outputs.has_build }}
       latest: ${{ steps.resolve.outputs.latest }}
       skipped: ${{ steps.filter.outputs.skipped }}
     steps:
@@ -88,7 +89,7 @@ jobs:
   build:
     name: 编译 ${{ matrix.version }} 基础固件
     needs: matrix
-    if: matrix.version != 'skip'
+    if: needs.matrix.outputs.has_build == 'true'
     strategy:
       fail-fast: false
       matrix:

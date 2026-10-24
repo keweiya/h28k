@@ -69,6 +69,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       versions: ${{ steps.filter.outputs.versions }}
+      has_build: ${{ steps.filter.outputs.has_build }}
       skipped: ${{ steps.filter.outputs.skipped }}
     steps:
       - name: 检出支持仓库
@@ -99,7 +100,7 @@ jobs:
   build:
     name: 周更编译 ${{ matrix.version }}
     needs: matrix
-    if: matrix.version != 'skip'
+    if: needs.matrix.outputs.has_build == 'true'
     strategy:
       fail-fast: false
       matrix:

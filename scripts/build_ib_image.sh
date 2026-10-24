@@ -119,6 +119,117 @@ cd "$ib_dir"
 # 保证 IB 本地没有的包仍可从官方源安装（与官方 release 完全一致、ABI 不变）。
 bash "$SCRIPT_DIR/ensure_ib_repositories.sh" "$ib_dir" "$ib_version"
 
+# 生成 WAN 首启兜底脚本：不依赖 base-files 的 board.d，首启时直接生成 WAN
+# 接口与 WAN 口 LED。98 字典序早于 99-h28k-setup，后者写入的 PPPoE 覆盖项
+# 依赖 wan 节已存在，此顺序保证旁路/拨号配置仍能生效
+write_wan_fallback() {
+  local target="$1"
+  mkdir -p "$(dirname "$target")"
+  cat > "$target" <<'EOF'
+# H28K WAN 兜底：board.d 配置缺失时直接生成 WAN 接口与 WAN 口 LED
+if ! uci -q get network.wan >/dev/null; then
+  uci set network.wan=interface
+  uci set network.wan.device='eth1'
+  uci set network.wan.proto='dhcp'
+  uci commit network
+fi
+if [ -e /sys/class/leds/blue:wan ]; then
+  uci -q delete system.led_wan
+  uci set system.led_wan=led
+  uci set system.led_wan.name='WAN'
+  uci set system.led_wan.sysfs='blue:wan'
+  uci set system.led_wan.dev='eth1'
+  uci set system.led_wan.trigger='netdev'
+  uci set system.led_wan.mode='link tx rx'
+  uci commit system
+fi
+EOF
+  chmod +x "$target"
+}
+
+# 校验已解包 rootfs 的 WAN 配置：rootfs 的 02_network 与注入的自建版本字节
+# 一致（H28K WAN case 在位），或已带首启 WAN 兜底。注意不能用 grep hinlink
+# 判定——官方 25.12 的 02_network 本就含 hinlink（MAC 生成 case），base-files
+# 被覆盖后该字样仍在，会误判通过
+verify_wan_rootfs() {
+  local root="$1"
+  if [[ -f "$root/etc/board.d/02_network" && -f "$ib_dir/files/etc/board.d/02_network" ]] &&
+     cmp -s "$root/etc/board.d/02_network" "$ib_dir/files/etc/board.d/02_network"; then
+    return 0
+  fi
+  [[ -f "$root/etc/uci-defaults/98-h28k-wan" ]]
+}
+
+# 防御性恢复：自建 base-files 的版本号前缀取自源码提交计数（浅克隆构建下必然
+# 低于官方 buildbot 的数值，如 1~ vs 1879~）。IB 组装启用官方远程源后，opkg/apk
+# 会按更高版本安装官方 base-files，覆盖自建包并连带丢失 H28K 板级配置
+# （board.d 的 WAN/LED 配置、phy-leds 等）。这里把 IB 捆绑的自建 base-files
+# 中的板级文件解出并经 FILES 注入：make image 在安装完全部包之后才拷贝 FILES，
+# 因此无论实际装的是哪个 base-files，最终 rootfs 都用回自建的板级配置。
+bf_stage="$(mktemp -d)"
+bf_src=""
+if compgen -G "packages/base-files_*.ipk" >/dev/null; then
+  # 24.10（opkg）：ipk 为 ar 归档，文件树在 data.tar.* 成员里
+  bf_ipk="$(ls packages/base-files_*.ipk | head -n1)"
+  for member in data.tar.gz data.tar.xz data.tar.zst data.tar; do
+    if ar p "$bf_ipk" "$member" > "$bf_stage/$member" 2>/dev/null; then
+      case "$member" in
+        *.gz)  tar -xzf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
+        *.xz)  tar -xJf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
+        *.zst) tar --zstd -xf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
+        *)     tar -xf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
+      esac
+      if [[ -e "$bf_stage/etc/board.d/02_network" ]]; then
+        bf_src="$bf_stage"
+        break
+      fi
+    fi
+  done
+elif compgen -G "packages/base-files-*.apk" >/dev/null; then
+  # 25.12/master（apk）：包为 tar 流（apk2 平铺 / apk3 分段），两种布局都容忍
+  bf_apk="$(ls packages/base-files-*.apk | head -n1)"
+  if ( zcat "$bf_apk" 2>/dev/null || cat "$bf_apk" ) | tar -x --ignore-zeros -C "$bf_stage" 2>/dev/null; then
+    if [[ -e "$bf_stage/etc/board.d/02_network" ]]; then
+      bf_src="$bf_stage"
+    fi
+  fi
+fi
+if [[ -z "$bf_src" ]]; then
+  bf_root="$(find "$bf_stage" -type f -path '*etc/board.d/02_network' -print -quit 2>/dev/null || true)"
+  if [[ -n "$bf_root" ]]; then
+    bf_src="$(dirname "$(dirname "$bf_root")")"
+  fi
+fi
+bf_ok=0
+if [[ -n "$bf_src" ]]; then
+  mkdir -p files/etc/board.d files/etc/hotplug.d/net files/etc/init.d
+  bf_ok=1
+  for rel in etc/board.d/01_leds etc/board.d/02_network \
+             etc/hotplug.d/net/40-net-smp-affinity etc/init.d/phy-leds; do
+    hit="$(find "$bf_src" -type f -path "*/$rel" -print -quit 2>/dev/null || true)"
+    if [[ -z "$hit" ]]; then
+      bf_ok=0
+      break
+    fi
+    cp -f "$hit" "files/$rel"
+  done
+  if [[ "$bf_ok" == 1 ]]; then
+    chmod +x files/etc/init.d/phy-leds
+    if grep -q hinlink files/etc/board.d/02_network; then
+      echo "=== H28K 板级文件已注入 FILES（自建 base-files 兜底，防官方包覆盖） ==="
+    else
+      bf_ok=0
+    fi
+  fi
+fi
+if [[ "$bf_ok" != 1 ]]; then
+  # 组装前修复：板级文件注入失败（IB 捆绑包解析失败等），退化为注入不依赖
+  # base-files 的首启 WAN 兜底配置，由出厂自检确认其进入最终 rootfs
+  echo "⚠️ 未能从 IB 捆绑的 base-files 解出 H28K 板级文件，已注入首启 WAN 兜底配置" >&2
+  write_wan_fallback "$ib_dir/files/etc/uci-defaults/98-h28k-wan"
+fi
+rm -rf "$bf_stage"
+
 echo "=== 生成首启配置（IP/密码/主题/WAN 模式/主机名/Wi-Fi/语言/时区） ==="
 password_hash="$(printf '%s\n' "$password" | openssl passwd -6 -stdin)"
 mkdir -p files/etc/uci-defaults
@@ -268,6 +379,54 @@ if (("${#failed_pkgs[@]}")); then
   printf '%s\n' "${failed_pkgs[@]}" > "$out_dir/failed-packages.txt"
   echo "=== ⚠ 安装失败的插件（已跳过）: ${failed_pkgs[*]} ==="
 fi
+
+# WAN 出厂自检：确认最终 rootfs 里 WAN 配置可用（board.d 含 H28K 配置，或已带
+# 首启 WAN 兜底）。缺失时注入兜底脚本并重新打包一次，仍缺失则中止发布，杜绝
+# 无 WAN 的固件进入 Release。以产物中的 rootfs.tar.gz 为检查对象（与镜像同一
+# rootfs 制备流程）。
+wan_selfcheck() {
+  local check_dir wan_tar
+  if ! compgen -G "$out_dir/*rootfs.tar.gz" >/dev/null; then
+    echo "⚠️ 产物中无 rootfs.tar.gz，跳过 WAN 出厂自检（依赖前置注入保障）" >&2
+    return 0
+  fi
+  wan_tar="$(ls "$out_dir"/*rootfs.tar.gz | head -n1)"
+  check_dir="$(mktemp -d)"
+  tar -xzf "$wan_tar" -C "$check_dir" \
+    './etc/board.d/02_network' './etc/uci-defaults/98-h28k-wan' 2>/dev/null || true
+  if verify_wan_rootfs "$check_dir"; then
+    rm -rf "$check_dir"
+    echo "=== WAN 出厂自检通过：rootfs 含 H28K WAN 配置 ==="
+    return 0
+  fi
+  echo "⚠️ WAN 出厂自检失败：最终 rootfs 无 WAN 配置，注入首启兜底后重新打包" >&2
+  write_wan_fallback "$ib_dir/files/etc/uci-defaults/98-h28k-wan"
+  rm -f "$out_dir"/*rootfs.tar.gz "$out_dir"/*hinlink_h28k*sysupgrade*.img.gz 2>/dev/null || true
+  if ! run_make_image "$good_pkgs"; then
+    rm -rf "$check_dir"
+    echo "❌ WAN 修复后重新打包失败" >&2
+    exit 1
+  fi
+  if ! compgen -G "$out_dir/*rootfs.tar.gz" >/dev/null; then
+    rm -rf "$check_dir"
+    echo "❌ 重新打包后无 rootfs.tar.gz，无法复检，中止发布" >&2
+    exit 1
+  fi
+  wan_tar="$(ls "$out_dir"/*rootfs.tar.gz | head -n1)"
+  rm -rf "$check_dir"
+  check_dir="$(mktemp -d)"
+  tar -xzf "$wan_tar" -C "$check_dir" \
+    './etc/board.d/02_network' './etc/uci-defaults/98-h28k-wan' 2>/dev/null || true
+  if verify_wan_rootfs "$check_dir"; then
+    rm -rf "$check_dir"
+    echo "=== 重新打包后 WAN 自检通过（首启兜底已生效） ==="
+    return 0
+  fi
+  rm -rf "$check_dir"
+  echo "❌ 重新打包后 WAN 配置仍缺失，中止发布" >&2
+  return 1
+}
+wan_selfcheck || exit 1
 
 out_abs="$(cd "$out_dir" && pwd)"
 shopt -s nullglob

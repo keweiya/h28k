@@ -70,6 +70,9 @@ version_input="${3:-}"
 load_firmware_config "$config_file"
 
 version="${version_input#v}"
+# 下拉选项显示为 master-SNAPSHOT（与 X.Y-SNAPSHOT 命名一致），内部统一为 master：
+# Release tag、底包 tag 均沿用 master 后缀，已有产物不受影响
+[[ "$version" == "master-SNAPSHOT" ]] && version="master"
 kind="$(version_kind "$version")"
 [[ "$kind" != "invalid" ]] ||
   fail "无法识别的版本：$version（支持 X.Y.Z / X.Y-SNAPSHOT / master）"

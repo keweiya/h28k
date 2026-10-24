@@ -13,7 +13,7 @@ on:
         default: all
         options:
           - all
-          - master
+          - master-SNAPSHOT
           - 25.12-SNAPSHOT
           - 24.10-SNAPSHOT
       lan_ip:
@@ -36,17 +36,17 @@ on:
           - 1G
           - 512M
       pppoe_user:
-        description: 'PPPoE 拨号账号（留空 = 用 firmware.conf，也为空则 WAN 保持 DHCP）'
+        description: 'PPPoE 拨号账号'
         type: string
         required: false
         default: ''
       pppoe_password:
-        description: 'PPPoE 拨号密码（与账号同时填写）'
+        description: 'PPPoE 拨号密码'
         type: string
         required: false
         default: ''
       bypass_gateway:
-        description: '旁路由模式：填主路由地址（与 PPPoE 互斥；需与 LAN 地址同网段且不能相同）'
+        description: '旁路由模式：填主路由地址'
         type: string
         required: false
         default: ''

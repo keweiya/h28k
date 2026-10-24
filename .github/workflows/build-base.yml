@@ -9,12 +9,11 @@ on:
         required: true
         options:
           - all
-          - master
-          - 25.12
+          - master-SNAPSHOT
           - 25.12-SNAPSHOT
+          - 25.12.2
           - 25.12.1
           - 25.12.0
-          - 24.10
           - 24.10-SNAPSHOT
           - 24.10.6
           - 24.10.5
@@ -41,6 +40,11 @@ on:
           - 2G
           - 1G
           - 512M
+      force:
+        description: '跳过更新校验，强制重建选中版本（改动补丁后使用）'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -54,8 +58,9 @@ jobs:
     name: 解析构建矩阵
     runs-on: ubuntu-24.04
     outputs:
-      versions: ${{ steps.resolve.outputs.versions }}
+      versions: ${{ steps.filter.outputs.versions }}
       latest: ${{ steps.resolve.outputs.latest }}
+      skipped: ${{ steps.filter.outputs.skipped }}
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
@@ -66,6 +71,18 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/resolve_versions.sh" \
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "${{ inputs.version }}" \
+            "$GITHUB_OUTPUT"
+
+      - name: 过滤未更新的版本（上游无更新且补丁未变则跳过）
+        id: filter
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/filter_unchanged_versions.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/patches" \
+            "${{ steps.resolve.outputs.versions }}" \
             "$GITHUB_OUTPUT"
 
   build:
@@ -332,11 +349,14 @@ jobs:
           V="${{ steps.release.outputs.rel_suffix }}"
           TAG="immortalwrt-h28k-base-$V"
           TITLE="ImmortalWrt H28K 基础固件 $V"
+          # 补丁指纹写入正文，供下次全量构建的跳过校验比对（补丁变了即重建）
+          PATCH_HASH="$(find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
           NOTES="## ImmortalWrt H28K 基础固件 $V
 
           - **构建类型**：源码完整编译（纯净基础版）
           - **构建时间**：${{ env.BUILD_TIME }}
           - **上游版本**：${{ steps.release.outputs.revision }}
+          - **补丁指纹**：\`$PATCH_HASH\`
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           - **默认密码**：\`${{ inputs.password }}\`

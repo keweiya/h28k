@@ -1,10 +1,9 @@
 --- a/target/linux/rockchip/modules.mk
 +++ b/target/linux/rockchip/modules.mk
-@@ -56,3 +56,21 @@
- endef
+@@ -39,6 +39,24 @@
  
  $(eval $(call KernelPackage,drm-rockchip))
-+
+ 
 +define KernelPackage/saradc-rockchip
 +  SUBMENU:=$(IIO_MENU)
 +  TITLE:=Rockchip SARADC support
@@ -22,3 +21,7 @@
 +endef
 +
 +$(eval $(call KernelPackage,saradc-rockchip))
++
+ 
+ define KernelPackage/drm-rocket
+   SUBMENU:=$(VIDEO_MENU)

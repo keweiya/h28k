@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 
 # 解析版本选择为构建矩阵的版本 JSON 列表：
-#   - all：在线枚举官方源当前发布的全部支持版本——supported_series 各系列的
-#     所有 X.Y.Z 正式版与 X.Y-SNAPSHOT 分支快照（排除 excluded_versions），加
-#     master。官方新发布的点版本自动纳入，无需改配置；枚举失败时回退到
-#     firmware.conf 的 supported_versions 静态列表并告警。
+#   - all：静态集合 = firmware.conf 的 supported_versions（与各工作流的版本
+#     下拉选项保持一致），不在线枚举官方源、不自动纳入新发布的点版本。
 #   - X.Y（如 24.10 / 25.12）：系列矩阵——仅枚举该系列的 X.Y.Z 正式版与
 #     X.Y-SNAPSHOT（不含 master）。
-#   - 具体版本：X.Y.Z / X.Y-SNAPSHOT / master，系列须在 supported_series 内。
-# 同时输出 latest（默认集合中最新的正式版），工作流用它决定哪个 Release 标
+#   - 具体版本：X.Y.Z / X.Y-SNAPSHOT / master-SNAPSHOT（归一化为 master），
+#     系列须在 supported_series 内。
+# 同时输出 latest（静态集合中最新的正式版），工作流用它决定哪个 Release 标
 # --latest，滚动快照永不抢占。
 
 set -euo pipefail
@@ -80,6 +79,9 @@ github_output="${3:-}"
   fail "usage: $0 <firmware.conf> <version|all> <github-output>"
 load_firmware_config "$conf"
 
+# 下拉选项显示为 master-SNAPSHOT（与 X.Y-SNAPSHOT 命名一致），内部统一为 master
+version_input="${version_input/master-SNAPSHOT/master}"
+
 latest_pool=""
 
 if [[ -n "$version_input" && "$version_input" != "all" ]]; then
@@ -110,24 +112,16 @@ if [[ -n "$version_input" && "$version_input" != "all" ]]; then
     latest_pool="static"
   fi
 else
-  if mapfile -t sorted < <(enumerate_official_versions) &&
-     (( ${#sorted[@]} >= 1 )); then
-    echo "all：在线枚举到 ${#sorted[@]} 个支持版本（新发布的点版本已自动纳入）"
-    latest_pool="enum"
-  else
-    echo "::warning::all 的在线枚举失败，回退到 firmware.conf 的 supported_versions 静态列表" >&2
-    mapfile -t sorted < <(static_versions)
-    latest_pool="static"
-  fi
+  # all：只构建与工作流下拉选项一致的静态集合（firmware.conf 的
+  # supported_versions），不在线枚举官方源——官方新发布的点版本需先加入
+  # 各工作流的版本选项并完成全量构建（产出底包），否则组装会 404
+  mapfile -t sorted < <(static_versions)
+  latest_pool="static"
 fi
 
-# latest = 候选池中最新的正式版：all 用枚举结果（自动跟随官方最新发布），
-# 单版本/系列矩阵用静态集合，避免旧版本或单一系列误标 --latest
-if [[ "$latest_pool" == "enum" ]]; then
-  pool=("${sorted[@]}")
-else
-  mapfile -t pool < <(static_versions)
-fi
+# latest = 静态集合中最新的正式版（all 与单版本/系列矩阵一致），避免旧版本
+# 或单一系列误标 --latest
+mapfile -t pool < <(static_versions)
 latest=""
 for v in "${pool[@]}"; do
   [[ "$(version_kind "$v")" == "release" ]] || continue

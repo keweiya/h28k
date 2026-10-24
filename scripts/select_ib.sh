@@ -17,6 +17,9 @@ case "$version" in
   master|*-SNAPSHOT|[0-9]*.[0-9]*.[0-9]*) ;;
   *) fail "invalid version: $version（支持 X.Y.Z / X.Y-SNAPSHOT / master）" ;;
 esac
+# 下拉选项显示为 master-SNAPSHOT，内部统一为 master（底包 tag 沿用
+# immortalwrt-h28k-base-master，已有 Release 不受影响）
+version="${version/master-SNAPSHOT/master}"
 rel_suffix="$version"
 case "$version" in
   master|*-SNAPSHOT) ;;
@@ -42,6 +45,24 @@ ib_url="${ib_urls%%$'\n'*}"
 if [[ -z "$ib_url" ]]; then
   assets="$(gh api "repos/{owner}/{repo}/releases/tags/$base_tag" --jq '[.assets[].name] | join("、")' 2>/dev/null)" || assets="(读取附件列表失败)"
   fail "Release $base_tag 存在但没有自建 ImageBuilder 附件（期望 ${ib_name}）。实际附件：${assets}。请重新运行「H28K 固件全量构建」工作流"
+fi
+
+# 滚动版本（master/SNAPSHOT）的底包会随官方 snapshots 源轮换而失效：底包捆绑
+# 的包依赖的 ABI 版本库（如 libubusYYYYMMDD）被官方源换新后，组装将报
+# "unable to select packages"。对底包 ImageBuilder 附件的更新时间做老化检查，
+# 超期时提醒先重建底包（正式版 X.Y.Z 的源不可变，无此问题）
+if [[ "$version" == master || "$version" == *-SNAPSHOT ]]; then
+  ib_updated="$(gh api "repos/{owner}/{repo}/releases/tags/$base_tag" --jq \
+    '.assets[] | select(.name == "'"${ib_name}"'" or (.name | startswith("'"${ib_prefix}"'"))) | .updated_at' \
+    2>/dev/null | head -n1)"
+  if [[ -n "$ib_updated" ]]; then
+    age_days=$(( ( $(date +%s) - $(date -d "$ib_updated" +%s) ) / 86400 ))
+    echo "底包 ImageBuilder 更新于 $ib_updated（距今 $age_days 天）"
+    if (( age_days >= 2 )); then
+      echo "⚠️ 滚动版本的底包已 $age_days 天未重建。官方 snapshots 源会轮换依赖包，" >&2
+      echo "   旧底包组装可能报 unable to select packages（no such package）；建议先重跑「H28K 固件全量构建」刷新底包" >&2
+    fi
+  fi
 fi
 
 

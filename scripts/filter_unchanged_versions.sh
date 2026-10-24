@@ -119,13 +119,16 @@ for v in "${versions[@]}"; do
   keep+=("$v")
 done
 
-json=''
-for v in "${keep[@]}"; do
-  json+="\"$v\","
-done
-printf 'versions=[%s]\n' "${json%,}" >> "$github_output"
-printf 'skipped=%s\n' "${skipped:-（无）}" >> "$github_output"
-
+# 全部被过滤时输出哨兵值 "skip"（配合编译 job 的 if 条件跳过）：GitHub 对
+# 空矩阵会把整个 run 标记为失败，不能输出空数组
 if (( ${#keep[@]} == 0 )); then
   echo "::warning::所有版本上游均无更新，本次不重建任何底包"
+  printf 'versions=["skip"]\n' >> "$github_output"
+else
+  json=''
+  for v in "${keep[@]}"; do
+    json+="\"$v\","
+  done
+  printf 'versions=[%s]\n' "${json%,}" >> "$github_output"
 fi
+printf 'skipped=%s\n' "${skipped:-（无）}" >> "$github_output"

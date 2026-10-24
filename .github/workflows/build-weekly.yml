@@ -99,6 +99,7 @@ jobs:
   build:
     name: 周更编译 ${{ matrix.version }}
     needs: matrix
+    if: matrix.version != 'skip'
     strategy:
       fail-fast: false
       matrix:

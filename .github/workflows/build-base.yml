@@ -88,6 +88,7 @@ jobs:
   build:
     name: 编译 ${{ matrix.version }} 基础固件
     needs: matrix
+    if: matrix.version != 'skip'
     strategy:
       fail-fast: false
       matrix:

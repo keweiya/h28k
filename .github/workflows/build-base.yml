@@ -41,7 +41,7 @@ on:
           - 1G
           - 512M
       force:
-        description: '跳过更新校验，强制重建选中版本（改动补丁后使用）'
+        description: '跳过更新校验，强制重建选中版本'
         type: boolean
         required: false
         default: false

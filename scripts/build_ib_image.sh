@@ -163,72 +163,36 @@ verify_wan_rootfs() {
 # 防御性恢复：自建 base-files 的版本号前缀取自源码提交计数（浅克隆构建下必然
 # 低于官方 buildbot 的数值，如 1~ vs 1879~）。IB 组装启用官方远程源后，opkg/apk
 # 会按更高版本安装官方 base-files，覆盖自建包并连带丢失 H28K 板级配置
-# （board.d 的 WAN/LED 配置、phy-leds 等）。这里把 IB 捆绑的自建 base-files
-# 中的板级文件解出并经 FILES 注入：make image 在安装完全部包之后才拷贝 FILES，
-# 因此无论实际装的是哪个 base-files，最终 rootfs 都用回自建的板级配置。
-bf_stage="$(mktemp -d)"
+# （board.d 的 WAN/LED 配置、phy-leds 等）。
+# 板级配置的权威来源是 IB 内的 target 源码覆盖层（0030 板级补丁的落点
+# target/linux/rockchip/armv8/base-files/），以普通文件随 IB 分发，与
+# ipk/apk 包格式无关，直接复制进 FILES 即可——make image 在安装完全部包
+# 之后才拷贝 FILES，无论实际装的是哪个 base-files，最终 rootfs 都用回自建
+# 的板级配置。
 bf_src=""
-if compgen -G "packages/base-files_*.ipk" >/dev/null; then
-  # 24.10（opkg）：ipk 为 ar 归档，文件树在 data.tar.* 成员里
-  bf_ipk="$(ls packages/base-files_*.ipk | head -n1)"
-  for member in data.tar.gz data.tar.xz data.tar.zst data.tar; do
-    if ar p "$bf_ipk" "$member" > "$bf_stage/$member" 2>/dev/null; then
-      case "$member" in
-        *.gz)  tar -xzf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
-        *.xz)  tar -xJf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
-        *.zst) tar --zstd -xf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
-        *)     tar -xf "$bf_stage/$member" -C "$bf_stage" 2>/dev/null || true ;;
-      esac
-      if [[ -e "$bf_stage/etc/board.d/02_network" ]]; then
-        bf_src="$bf_stage"
-        break
-      fi
-    fi
-  done
-elif compgen -G "packages/base-files-*.apk" >/dev/null; then
-  # 25.12/master（apk）：包为 tar 流（apk2 平铺 / apk3 分段），两种布局都容忍
-  bf_apk="$(ls packages/base-files-*.apk | head -n1)"
-  if ( zcat "$bf_apk" 2>/dev/null || cat "$bf_apk" ) | tar -x --ignore-zeros -C "$bf_stage" 2>/dev/null; then
-    if [[ -e "$bf_stage/etc/board.d/02_network" ]]; then
-      bf_src="$bf_stage"
-    fi
+if [[ -d "$ib_dir/target/linux/rockchip/armv8/base-files/etc/board.d" ]]; then
+  bf_src="$ib_dir/target/linux/rockchip/armv8/base-files"
+fi
+if [[ -n "$bf_src" ]]; then
+  mkdir -p files/etc/board.d files/etc/hotplug.d/net files/etc/init.d
+  cp -f "$bf_src/etc/board.d/01_leds" "$bf_src/etc/board.d/02_network" files/etc/board.d/
+  cp -f "$bf_src/etc/hotplug.d/net/40-net-smp-affinity" files/etc/hotplug.d/net/
+  cp -f "$bf_src/etc/init.d/phy-leds" files/etc/init.d/
+  chmod +x files/etc/init.d/phy-leds
+  if cmp -s "$bf_src/etc/board.d/02_network" files/etc/board.d/02_network &&
+     grep -q hinlink files/etc/board.d/02_network; then
+    echo "=== H28K 板级文件已注入 FILES（取自 IB 内 target 源码覆盖层） ==="
+  else
+    bf_src=""
   fi
 fi
 if [[ -z "$bf_src" ]]; then
-  bf_root="$(find "$bf_stage" -type f -path '*etc/board.d/02_network' -print -quit 2>/dev/null || true)"
-  if [[ -n "$bf_root" ]]; then
-    bf_src="$(dirname "$(dirname "$bf_root")")"
-  fi
-fi
-bf_ok=0
-if [[ -n "$bf_src" ]]; then
-  mkdir -p files/etc/board.d files/etc/hotplug.d/net files/etc/init.d
-  bf_ok=1
-  for rel in etc/board.d/01_leds etc/board.d/02_network \
-             etc/hotplug.d/net/40-net-smp-affinity etc/init.d/phy-leds; do
-    hit="$(find "$bf_src" -type f -path "*/$rel" -print -quit 2>/dev/null || true)"
-    if [[ -z "$hit" ]]; then
-      bf_ok=0
-      break
-    fi
-    cp -f "$hit" "files/$rel"
-  done
-  if [[ "$bf_ok" == 1 ]]; then
-    chmod +x files/etc/init.d/phy-leds
-    if grep -q hinlink files/etc/board.d/02_network; then
-      echo "=== H28K 板级文件已注入 FILES（自建 base-files 兜底，防官方包覆盖） ==="
-    else
-      bf_ok=0
-    fi
-  fi
-fi
-if [[ "$bf_ok" != 1 ]]; then
-  # 组装前修复：板级文件注入失败（IB 捆绑包解析失败等），退化为注入不依赖
-  # base-files 的首启 WAN 兜底配置，由出厂自检确认其进入最终 rootfs
-  echo "⚠️ 未能从 IB 捆绑的 base-files 解出 H28K 板级文件，已注入首启 WAN 兜底配置" >&2
+  # 修复兜底：覆盖层缺失（异常 IB）时，注入不依赖 base-files 的首启 WAN
+  # 配置，由出厂自检确认其进入最终 rootfs
+  echo "⚠️ IB 内未找到 H28K 板级源码覆盖层，已注入首启 WAN 兜底配置" >&2
   write_wan_fallback "$ib_dir/files/etc/uci-defaults/98-h28k-wan"
 fi
-rm -rf "$bf_stage"
+
 
 echo "=== 生成首启配置（IP/密码/主题/WAN 模式/主机名/Wi-Fi/语言/时区） ==="
 password_hash="$(printf '%s\n' "$password" | openssl passwd -6 -stdin)"

@@ -1,4 +1,4 @@
-name: H28K 固件全量构建（源码编译 → 固件 + 自建 ImageBuilder）
+name: H28K 固件全量构建
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: H28K 固件快速组装（ImageBuilder 直接出固件）
+name: H28K 固件快速组装
 
 on:
   workflow_dispatch:

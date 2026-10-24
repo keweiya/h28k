@@ -1,4 +1,4 @@
-name: H28K 周更固件（周四 02:00：master + 双快照，基础+定制 同发布）
+name: H28K 周更固件
 
 on:
   schedule:

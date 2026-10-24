@@ -314,7 +314,7 @@ jobs:
             "$GITHUB_WORKSPACE/out" \
             "${{ steps.release.outputs.version }}"
 
-      - name: 收集基础+定制产物（同发布到一个 Release）
+      - name: 收集基础+定制产物（覆盖 base / custom 两个 Release）
         id: pack
         run: |
           mkdir -p release_files
@@ -340,6 +340,9 @@ jobs:
           for f in out/*squashfs-sysupgrade.img.gz; do
             [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-custom-squashfs-sysupgrade.img.gz"
           done
+          for f in out/*rootfs.tar.gz; do
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-$rel-h28k-custom-rootfs.tar.gz"
+          done
 
           # ImageBuilder（内核 ABI 一致，可自行组装）
           for f in $TARGET_DIR/immortalwrt-imagebuilder-*.tar.zst; do
@@ -357,7 +360,7 @@ jobs:
           ls -lh release_files/
           echo "BUILD_TIME=$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')" >> "$GITHUB_ENV"
 
-      - name: 发布 Release（唯一周更 Release，原地重建）
+      - name: 更新 base 与 custom Release（原地覆盖资产与正文）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REL: ${{ steps.release.outputs.rel_suffix }}
@@ -365,8 +368,6 @@ jobs:
           LAN_IP: ${{ inputs.lan_ip }}
           PASSWORD: ${{ inputs.password }}
         run: |
-          TAG="immortalwrt-h28k-$REL"
-          TITLE="ImmortalWrt H28K 周更固件 $REL（基础 + 定制）"
           # 密码与仓库默认值一致才写进公开 Release 页；自定义密码不外发
           if [[ "$PASSWORD" == "password" ]]; then
             PASS_LINE='- **默认密码**：`password`'
@@ -398,37 +399,65 @@ jobs:
           else
             PLUGIN_STATUS='- ✅ 定制固件全部插件安装成功'
           fi
-          NOTES="## ImmortalWrt H28K 周更固件 $REL（基础 + 定制）
+          # 补丁指纹写入正文，供更新校验比对（补丁变了即重建）
+          PATCH_HASH="$(find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
 
-          - **构建类型**：每周四定时编译（基础固件 + 定制固件同发布，默认 2G 根目录）
+          # ---- base Release：已由全量构建创建，覆盖同名资产并同步正文（上游
+          # 版本/补丁指纹随周更刷新，供下次更新校验比对）----
+          BASE_TAG="immortalwrt-h28k-base-$REL"
+          BASE_NOTES="## ImmortalWrt H28K 基础固件 $REL
+
+          - **构建类型**：源码完整编译（纯净基础版）
+          - **构建时间**：${{ env.BUILD_TIME }}
+          - **上游版本**：$REVISION
+          - **补丁指纹**：\`$PATCH_HASH\`
+          - **设备型号**：HINLINK H28K (RK3528)
+          - **管理地址**：\`$LAN_IP\`
+          $PASS_LINE
+          - **包含附件**：
+            - \`immortalwrt-$REL-h28k-base-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-$REL-h28k-base-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-$REL-h28k-base-rootfs.tar.gz\`
+            - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`"
+
+          shopt -s nullglob
+          BASE_ASSETS=(release_files/*h28k-base-*)
+          CUSTOM_ASSETS=(release_files/*h28k-custom-*)
+
+          if gh release view "$BASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$BASE_TAG" "${BASE_ASSETS[@]}" --clobber
+            gh release edit "$BASE_TAG" --title "ImmortalWrt H28K 基础固件 $REL" --notes "$BASE_NOTES"
+            echo "=== 已更新 $BASE_TAG ==="
+          else
+            gh release create "$BASE_TAG" "${BASE_ASSETS[@]}" --title "ImmortalWrt H28K 基础固件 $REL" --notes "$BASE_NOTES" --latest=false
+            echo "=== 已创建 $BASE_TAG ==="
+          fi
+
+          # ---- custom Release：创建或覆盖 ----
+          CUSTOM_TAG="immortalwrt-h28k-custom-$REL"
+          CUSTOM_NOTES="## ImmortalWrt H28K 定制固件 $REL
+
+          - **构建类型**：ImageBuilder 组装（开箱即用定制版，已预装 config/ib-packages.list 启用的插件）
           - **构建时间**：${{ env.BUILD_TIME }}
           - **上游版本**：$REVISION
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`$LAN_IP\`
           $PASS_LINE
-          - **基础固件**（纯净官方组件，不含第三方插件）：
-            - \`immortalwrt-$REL-h28k-base-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-$REL-h28k-base-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-$REL-h28k-base-rootfs.tar.gz\`
-          - **定制固件**（已预装 config/ib-packages.list 启用的插件）：
+          $PLUGIN_STATUS
+          - **包含附件**：
             - \`immortalwrt-$REL-h28k-custom-squashfs-sysupgrade.img.gz\`
             - \`immortalwrt-$REL-h28k-custom-ext4-sysupgrade.img.gz\`
-          $PLUGIN_STATUS
-          - **ImageBuilder**（内核 ABI 一致，可自行组装）：
-            - \`immortalwrt-$REL-h28k-base-imagebuilder-rockchip-armv8.tar.zst\`"
+            - \`immortalwrt-$REL-h28k-custom-rootfs.tar.gz\`"
 
-          shopt -s nullglob
-          FILES=(release_files/*)
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "未找到发布文件" >&2
-            exit 1
+          if gh release view "$CUSTOM_TAG" >/dev/null 2>&1; then
+            gh release upload "$CUSTOM_TAG" "${CUSTOM_ASSETS[@]}" --clobber
+            gh release edit "$CUSTOM_TAG" --title "ImmortalWrt H28K 定制固件 $REL" --notes "$CUSTOM_NOTES"
+            echo "=== 已更新 $CUSTOM_TAG ==="
+          else
+            gh release create "$CUSTOM_TAG" "${CUSTOM_ASSETS[@]}" --title "ImmortalWrt H28K 定制固件 $REL" --notes "$CUSTOM_NOTES" --latest=false
+            echo "=== 已创建 $CUSTOM_TAG ==="
           fi
 
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          git push origin :refs/tags/"$TAG" 2>/dev/null || true
-          # 周更 rolling 版本不抢占 latest（latest 保持给最新正式版）
-          gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --latest=false
-          echo "=== 已发布 $TAG ==="
 
       - name: 上传失败编译日志
         if: failure()

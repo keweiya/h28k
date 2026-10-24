@@ -75,12 +75,19 @@ static_versions() {
 conf="${1:-}"
 version_input="${2:-}"
 github_output="${3:-}"
+no_rolling="${4:-}"
 [[ -n "$conf" && -n "$github_output" ]] ||
-  fail "usage: $0 <firmware.conf> <version|all> <github-output>"
+  fail "usage: $0 <firmware.conf> <version|all> <github-output> [no_rolling]"
 load_firmware_config "$conf"
 
 # 下拉选项显示为 master-SNAPSHOT（与 X.Y-SNAPSHOT 命名一致），内部统一为 master
 version_input="${version_input/master-SNAPSHOT/master}"
+
+# no_rolling=true：排除滚动版本（master / X.Y-SNAPSHOT）——供 build-custom
+# 使用，滚动版本的固件由 build-weekly 的周更包承载，不再单独出 custom Release
+filter_no_rolling() {
+  printf '%s\n' "$@" | grep -vE '^(master|.*-SNAPSHOT)$' || true
+}
 
 latest_pool=""
 
@@ -128,6 +135,13 @@ for v in "${pool[@]}"; do
   latest="$v"
   break
 done
+
+if [[ "$no_rolling" == "true" ]]; then
+  mapfile -t sorted < <(filter_no_rolling "${sorted[@]}")
+  if (( ${#sorted[@]} == 0 )); then
+    fail "排除滚动版本后无待构建版本；滚动版本的固件由 build-weekly 周更包承载"
+  fi
+fi
 
 json=''
 for v in "${sorted[@]}"; do

@@ -1,4 +1,4 @@
-name: H28K 周更固件
+name: H28K 周更固件（周四 02:00：master + 双快照，基础+定制 同发布）
 
 on:
   schedule:
@@ -50,6 +50,11 @@ on:
         type: string
         required: false
         default: ''
+      force:
+        description: '跳过更新校验，强制重建选中版本'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -63,7 +68,8 @@ jobs:
     name: 解析构建矩阵
     runs-on: ubuntu-24.04
     outputs:
-      versions: ${{ steps.resolve.outputs.versions }}
+      versions: ${{ steps.filter.outputs.versions }}
+      skipped: ${{ steps.filter.outputs.skipped }}
     steps:
       - name: 检出支持仓库
         uses: actions/checkout@v4
@@ -77,6 +83,18 @@ jobs:
           else
             printf 'versions=["%s"]\n' "$v" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: 过滤未更新的版本（上游无更新且补丁未变则跳过）
+        id: filter
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/filter_unchanged_versions.sh" \
+            "$GITHUB_WORKSPACE/config/firmware.conf" \
+            "$GITHUB_WORKSPACE/patches" \
+            "${{ steps.resolve.outputs.versions }}" \
+            "$GITHUB_OUTPUT"
 
   build:
     name: 周更编译 ${{ matrix.version }}

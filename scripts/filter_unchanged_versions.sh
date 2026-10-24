@@ -59,6 +59,8 @@ keep=()
 skipped=""
 for v in "${versions[@]}"; do
   [[ -n "$v" ]] || continue
+  # 下拉选项显示为 master-SNAPSHOT，内部统一为 master（底包 tag 沿用 master 后缀）
+  v="${v/master-SNAPSHOT/master}"
   rel="$(rel_suffix_of "$v")"
   base_tag="immortalwrt-h28k-base-$rel"
   ib_name="immortalwrt-${rel}-h28k-base-imagebuilder-rockchip-armv8.tar.zst"

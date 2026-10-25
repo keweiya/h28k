@@ -66,6 +66,24 @@
 - **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。首启开机默认（WAN 拨号/旁路由、主机名、Wi-Fi、中文界面、时区 NTP）在 `config/firmware.conf` 设置，仅作用于定制固件，设备上可随时改；其中 WAN 拨号与旁路由也可在组装/周更工作流输入框临时填写（留空 = 用 conf 值，旁路由网关不能与 LAN 地址相同）。
 - **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
 
+### 构建其他 rockchip 设备
+
+自建 ImageBuilder 面向**整个 rockchip/armv8 目标**（`CONFIG_ALL_NONSHARED` 已全量选中各设备专用包、所有 kmod 全量编译），官方 rockchip/armv8 支持的设备都能出镜像，不止 H28K：
+
+- **手动用 IB**（任意 Linux 机器）：
+
+  ```bash
+  tar --zstd -xf immortalwrt-<版本>-h28k-base-imagebuilder-rockchip-armv8.tar.zst
+  cd immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64
+  make info                 # 列出全部设备 profile 与默认包
+  make image PROFILE=friendlyarm_nanopi-r5s ROOTFS_PARTSIZE=1024
+  make image PROFILE=lunzn_fastrhino-r66s PACKAGES="kmod-r8169"
+  ```
+
+  profile 名即 `armv8.mk` 里 `DEVICE_xxx` 的下划线形式，以 `make info` 输出为准。非 H28K 设备组装时安装的是官方 base-files，其板级配置本就包含官方全部设备，无需任何注入。
+
+- **用快速组装 workflow**：输入框新增「设备 profile」（默认 `hinlink_h28k`）——填其他设备的 profile 即可出该设备的定制固件，资产名会携带 profile。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用，其他设备直接使用官方板级配置，不受影响。
+
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 
 ## 目录结构

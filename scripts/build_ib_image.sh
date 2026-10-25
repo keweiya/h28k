@@ -15,10 +15,13 @@ config_file="${2:-}"
 packages_list="${3:-}"
 out_dir="${4:-}"
 ib_version="${5:-}"
+profile="${6:-hinlink_h28k}"
 [[ -n "$ib_tarball" && -n "$config_file" && -n "$packages_list" && -n "$out_dir" ]] ||
-  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> <ib-version>"
+  fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> <ib-version> [profile]"
 [[ -f "$ib_tarball" ]] || fail "ImageBuilder tarball not found: $ib_tarball"
 [[ -f "$packages_list" ]] || fail "package list not found: $packages_list"
+[[ "$profile" =~ ^[a-z0-9._-]+$ ]] ||
+  fail "invalid profile: $profile（仅小写字母/数字/点/下划线/连字符；名称用 make info 查询）"
 
 load_firmware_config "$config_file"
 
@@ -160,37 +163,42 @@ verify_wan_rootfs() {
   [[ -f "$root/etc/uci-defaults/98-h28k-wan" ]]
 }
 
-# 防御性恢复：自建 base-files 的版本号前缀取自源码提交计数（浅克隆构建下必然
-# 低于官方 buildbot 的数值，如 1~ vs 1879~）。IB 组装启用官方远程源后，opkg/apk
-# 会按更高版本安装官方 base-files，覆盖自建包并连带丢失 H28K 板级配置
-# （board.d 的 WAN/LED 配置、phy-leds 等）。
-# 板级配置的权威来源是 IB 内的 target 源码覆盖层（0030 板级补丁的落点
-# target/linux/rockchip/armv8/base-files/），以普通文件随 IB 分发，与
-# ipk/apk 包格式无关，直接复制进 FILES 即可——make image 在安装完全部包
-# 之后才拷贝 FILES，无论实际装的是哪个 base-files，最终 rootfs 都用回自建
-# 的板级配置。
-bf_src=""
-if [[ -d "$ib_dir/target/linux/rockchip/armv8/base-files/etc/board.d" ]]; then
-  bf_src="$ib_dir/target/linux/rockchip/armv8/base-files"
-fi
-if [[ -n "$bf_src" ]]; then
-  mkdir -p files/etc/board.d files/etc/hotplug.d/net files/etc/init.d
-  cp -f "$bf_src/etc/board.d/01_leds" "$bf_src/etc/board.d/02_network" files/etc/board.d/
-  cp -f "$bf_src/etc/hotplug.d/net/40-net-smp-affinity" files/etc/hotplug.d/net/
-  cp -f "$bf_src/etc/init.d/phy-leds" files/etc/init.d/
-  chmod +x files/etc/init.d/phy-leds
-  if cmp -s "$bf_src/etc/board.d/02_network" files/etc/board.d/02_network &&
-     grep -q hinlink files/etc/board.d/02_network; then
-    echo "=== H28K 板级文件已注入 FILES（取自 IB 内 target 源码覆盖层） ==="
-  else
-    bf_src=""
+if [[ "$profile" == "hinlink_h28k" ]]; then
+  # 防御性恢复：自建 base-files 的版本号前缀取自源码提交计数（浅克隆构建下必然
+  # 低于官方 buildbot 的数值，如 1~ vs 1879~）。IB 组装启用官方远程源后，opkg/apk
+  # 会按更高版本安装官方 base-files，覆盖自建包并连带丢失 H28K 板级配置
+  # （board.d 的 WAN/LED 配置、phy-leds 等）。
+  # 板级配置的权威来源是 IB 内的 target 源码覆盖层（0030 板级补丁的落点
+  # target/linux/rockchip/armv8/base-files/），以普通文件随 IB 分发，与
+  # ipk/apk 包格式无关，直接复制进 FILES 即可——make image 在安装完全部包
+  # 之后才拷贝 FILES，无论实际装的是哪个 base-files，最终 rootfs 都用回自建
+  # 的板级配置。
+  bf_src=""
+  if [[ -d "$ib_dir/target/linux/rockchip/armv8/base-files/etc/board.d" ]]; then
+    bf_src="$ib_dir/target/linux/rockchip/armv8/base-files"
   fi
-fi
-if [[ -z "$bf_src" ]]; then
-  # 修复兜底：覆盖层缺失（异常 IB）时，注入不依赖 base-files 的首启 WAN
-  # 配置，由出厂自检确认其进入最终 rootfs
-  echo "⚠️ IB 内未找到 H28K 板级源码覆盖层，已注入首启 WAN 兜底配置" >&2
-  write_wan_fallback "$ib_dir/files/etc/uci-defaults/98-h28k-wan"
+  if [[ -n "$bf_src" ]]; then
+    mkdir -p files/etc/board.d files/etc/hotplug.d/net files/etc/init.d
+    cp -f "$bf_src/etc/board.d/01_leds" "$bf_src/etc/board.d/02_network" files/etc/board.d/
+    cp -f "$bf_src/etc/hotplug.d/net/40-net-smp-affinity" files/etc/hotplug.d/net/
+    cp -f "$bf_src/etc/init.d/phy-leds" files/etc/init.d/
+    chmod +x files/etc/init.d/phy-leds
+    if cmp -s "$bf_src/etc/board.d/02_network" files/etc/board.d/02_network &&
+       grep -q hinlink files/etc/board.d/02_network; then
+      echo "=== H28K 板级文件已注入 FILES（取自 IB 内 target 源码覆盖层） ==="
+    else
+      bf_src=""
+    fi
+  fi
+  if [[ -z "$bf_src" ]]; then
+    # 修复兜底：覆盖层缺失（异常 IB）时，注入不依赖 base-files 的首启 WAN
+    # 配置，由出厂自检确认其进入最终 rootfs
+    echo "⚠️ IB 内未找到 H28K 板级源码覆盖层，已注入首启 WAN 兜底配置" >&2
+    write_wan_fallback "$ib_dir/files/etc/uci-defaults/98-h28k-wan"
+  fi
+
+else
+  echo "=== 设备 profile=$profile：非 H28K，跳过 H28K 板级注入与自检（使用官方 base-files 板级配置） ==="
 fi
 
 
@@ -272,14 +280,14 @@ if [ -f repositories ] || [ -f repositories.conf ]; then
   fi
 fi
 
-echo "=== 组装镜像（PROFILE=hinlink_h28k） ==="
+echo "=== 组装镜像（PROFILE=$profile） ==="
 echo "    额外软件包: ${packages:-（无）}"
 
 IB_META="$ib_dir/.targetinfo"
 
 run_make_image() {
   make image \
-    PROFILE=hinlink_h28k \
+    PROFILE="$profile" \
     PACKAGES="$1" \
     FILES="$ib_dir/files" \
     ROOTFS_PARTSIZE="$rootfs_size" \
@@ -390,11 +398,13 @@ wan_selfcheck() {
   echo "❌ 重新打包后 WAN 配置仍缺失，中止发布" >&2
   return 1
 }
-wan_selfcheck || exit 1
+if [[ "$profile" == "hinlink_h28k" ]]; then
+  wan_selfcheck || exit 1
+fi
 
 out_abs="$(cd "$out_dir" && pwd)"
 shopt -s nullglob
-images=("$out_abs"/*hinlink_h28k*sysupgrade*.img.gz)
+images=("$out_abs"/*"$profile"*sysupgrade*.img.gz)
 [[ "${#images[@]}" -gt 0 ]] || { echo "error: 未生成 sysupgrade 固件" >&2; exit 1; }
 echo "=== 产物 ==="
 ls -lh "${images[@]}"

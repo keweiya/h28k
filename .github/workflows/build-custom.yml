@@ -28,6 +28,11 @@ on:
         type: string
         required: false
         default: 'password'
+      profile:
+        description: '设备 profile（make info 可查；留空默认 H28K，其他设备见 README）'
+        type: string
+        required: false
+        default: 'hinlink_h28k'
       rootfs_size:
         description: '固件根目录大小'
         type: choice
@@ -125,25 +130,31 @@ jobs:
             "$GITHUB_WORKSPACE/config/firmware.conf" \
             "$GITHUB_WORKSPACE/config/ib-packages.list" \
             "$GITHUB_WORKSPACE/out" \
-            "${{ matrix.version }}"
+            "${{ matrix.version }}" \
+            "${{ inputs.profile }}"
 
       - name: 整理并重命名定制产物（剔除重复包，增加 custom 与版本号）
+        env:
+          PROFILE: ${{ inputs.profile }}
         run: |
           mkdir -p release_files
           V="${{ steps.base.outputs.rel_suffix }}"
+          # 资产名携带设备：H28K 沿用 h28k，其他设备用其 profile 名
+          DEV='h28k'
+          [[ "$PROFILE" == 'hinlink_h28k' ]] || DEV="$PROFILE"
 
           # 剔除无用的 targz-sysupgrade 重复包
           rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
 
           # 拷贝并规范化重命名
           for f in out/*ext4-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-${DEV}-custom-ext4-sysupgrade.img.gz"
           done
           for f in out/*squashfs-sysupgrade.img.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-${DEV}-custom-squashfs-sysupgrade.img.gz"
           done
           for f in out/*rootfs.tar.gz; do
-            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-h28k-custom-rootfs.tar.gz"
+            [ -f "$f" ] && cp -f "$f" "release_files/immortalwrt-${V}-${DEV}-custom-rootfs.tar.gz"
           done
 
           echo "=== 定制待发布文件列表 ==="
@@ -222,8 +233,12 @@ jobs:
       - name: 发布 Release（唯一 Custom Release）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           V="${{ steps.base.outputs.rel_suffix }}"
+          # 资产名携带设备：H28K 沿用 h28k，其他设备用其 profile 名
+          DEV='h28k'
+          [[ "$PROFILE" == 'hinlink_h28k' ]] || DEV="$PROFILE"
           TAG="immortalwrt-h28k-custom-$V"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
           TITLE="ImmortalWrt H28K 定制固件 $V"
@@ -238,6 +253,7 @@ jobs:
           - **构建类型**：ImageBuilder 组装（开箱即用定制版）
           - **组装时间**：$BUILD_TIME
           - **基于底包**：ImmortalWrt ${{ matrix.version }}
+          - **设备 profile**：${{ inputs.profile }}（H28K = hinlink_h28k）
           - **设备型号**：HINLINK H28K (RK3528)
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           $PASS_LINE
@@ -246,9 +262,9 @@ jobs:
           ${{ env.MISSING_LINE }}
           ${{ env.FAILED_LINE }}
           - **包含附件**：
-            - \`immortalwrt-${V}-h28k-custom-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-h28k-custom-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-h28k-custom-rootfs.tar.gz\`"
+            - \`immortalwrt-${V}-${DEV}-custom-ext4-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-${DEV}-custom-squashfs-sysupgrade.img.gz\`
+            - \`immortalwrt-${V}-${DEV}-custom-rootfs.tar.gz\`"
 
           shopt -s nullglob
           FILES=(release_files/*)

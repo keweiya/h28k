@@ -143,7 +143,8 @@ jobs:
           V="${{ steps.base.outputs.rel_suffix }}"
           # 资产名携带设备：H28K 沿用 h28k，其他设备用其 profile 名
           DEV='h28k'
-          [[ "$PROFILE" == 'hinlink_h28k' ]] || DEV="$PROFILE"
+          DEV_NAME='H28K'
+          if [[ -n "$PROFILE" && "$PROFILE" != 'hinlink_h28k' ]]; then DEV="$PROFILE"; DEV_NAME="$PROFILE"; fi
 
           # 剔除无用的 targz-sysupgrade 重复包
           rm -f out/*targz-sysupgrade.img.gz 2>/dev/null || true
@@ -240,17 +241,18 @@ jobs:
           V="${{ steps.base.outputs.rel_suffix }}"
           # 资产名携带设备：H28K 沿用 h28k，其他设备用其 profile 名
           DEV='h28k'
-          [[ "$PROFILE" == 'hinlink_h28k' ]] || DEV="$PROFILE"
+          DEV_NAME='H28K'
+          if [[ -n "$PROFILE" && "$PROFILE" != 'hinlink_h28k' ]]; then DEV="$PROFILE"; DEV_NAME="$PROFILE"; fi
           TAG="immortalwrt-$DEV-custom-$V"
           BUILD_TIME="$(TZ=Asia/Hong_Kong date +'%Y-%m-%d %H:%M')"
-          TITLE="ImmortalWrt $DEV 定制固件 $V"
+          TITLE="ImmortalWrt $DEV_NAME 定制固件 $V"
           # 密码与仓库默认值一致才写进公开 Release 页；自定义密码不外发
           if [[ "${{ inputs.password }}" == "password" ]]; then
             PASS_LINE='- **默认密码**：`password`'
           else
             PASS_LINE='- **默认密码**：（已自定义，与构建输入一致，不在此显示）'
           fi
-          NOTES="## ImmortalWrt $DEV 定制固件 $V
+          NOTES="## ImmortalWrt $DEV_NAME 定制固件 $V
 
           - **构建类型**：ImageBuilder 组装（开箱即用定制版）
           - **组装时间**：$BUILD_TIME

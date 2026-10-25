@@ -283,12 +283,16 @@ jobs:
           else
             DEVICE_LINE="- **设备 profile**：$PROFILE"
           fi
-          NOTES="## ImmortalWrt $DEV_NAME 定制固件 $V
-
-          - **构建类型**：ImageBuilder 组装（开箱即用定制版；其他设备使用官方 ImageBuilder）
+          # 附件列表按实际产物生成（官方 IB 组装无 rootfs.tar.gz，与自建 IB 产物集不同）
+          ATTACH=""
+          while IFS= read -r f; do
+            ATTACH="$ATTACH
+            - \`$f\`"
+          done < <(cd release_files && ls -1)
+          ATTACH="${ATTACH#$'\n'}"
+          NOTES="- **构建类型**：ImageBuilder 组装（开箱即用定制版；其他设备使用官方 ImageBuilder）
           - **组装时间**：$BUILD_TIME
           - **基于底包**：ImmortalWrt ${{ matrix.version }}
-          - **设备 profile**：${{ inputs.profile }}（H28K = hinlink_h28k）
           $DEVICE_LINE
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           $PASS_LINE
@@ -297,9 +301,7 @@ jobs:
           ${{ env.MISSING_LINE }}
           ${{ env.FAILED_LINE }}
           - **包含附件**：
-            - \`immortalwrt-${V}-${DEV}-custom-ext4-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-${DEV}-custom-squashfs-sysupgrade.img.gz\`
-            - \`immortalwrt-${V}-${DEV}-custom-rootfs.tar.gz\`"
+          $ATTACH"
 
           shopt -s nullglob
           FILES=(release_files/*)

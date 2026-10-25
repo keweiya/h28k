@@ -353,9 +353,7 @@ jobs:
           TITLE="ImmortalWrt H28K 基础固件 $V"
           # 补丁指纹写入正文，供下次全量构建的跳过校验比对（补丁变了即重建）
           PATCH_HASH="$( { find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$GITHUB_WORKSPACE/config/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1 )"
-          NOTES="## ImmortalWrt H28K 基础固件 $V
-
-          - **构建类型**：源码完整编译（纯净基础版）
+          NOTES="- **构建类型**：源码完整编译（纯净基础版）
           - **构建时间**：${{ env.BUILD_TIME }}
           - **上游版本**：${{ steps.release.outputs.revision }}
           - **构建指纹**：\`$PATCH_HASH\`

@@ -420,9 +420,7 @@ jobs:
           # ---- base Release：已由全量构建创建，覆盖同名资产并同步正文（上游
           # 版本/补丁指纹随周更刷新，供下次更新校验比对）----
           BASE_TAG="immortalwrt-h28k-base-$REL"
-          BASE_NOTES="## ImmortalWrt H28K 基础固件 $REL
-
-          - **构建类型**：源码完整编译（纯净基础版）
+          BASE_NOTES="- **构建类型**：源码完整编译（纯净基础版）
           - **构建时间**：${{ env.BUILD_TIME }}
           - **上游版本**：$REVISION
           - **构建指纹**：\`$PATCH_HASH\`
@@ -450,9 +448,7 @@ jobs:
 
           # ---- custom Release：创建或覆盖 ----
           CUSTOM_TAG="immortalwrt-$DEV-custom-$REL"
-          CUSTOM_NOTES="## ImmortalWrt $DEV_NAME 定制固件 $REL
-
-          - **构建类型**：ImageBuilder 组装（开箱即用定制版，已预装 config/ib-packages.list 启用的插件）
+          CUSTOM_NOTES="- **构建类型**：ImageBuilder 组装（开箱即用定制版，已预装 config/ib-packages.list 启用的插件）
           - **构建时间**：${{ env.BUILD_TIME }}
           - **上游版本**：$REVISION
           - **设备型号**：HINLINK H28K (RK3528)

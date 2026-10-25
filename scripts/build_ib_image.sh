@@ -324,41 +324,21 @@ prune_missing_device_packages() {
   [[ $pruned -gt 0 ]]
 }
 
-declare -a failed_pkgs=()
+# 组装：批量安装一次。失败时先尝试自动剔除设备配方中不可安装的缺失包后
+# 重试一轮（这是修复而非重试，曾真实修复 24.10.1/2/3 与 master 的缺包）；
+# 再失败即中止——同一错误反复重试没有意义（如设备 U-Boot 缺失时逐包重试
+# 全部撞同一错误）
 good_pkgs="$packages"
-per_package_done=0
 round=0
 until run_make_image "$good_pkgs"; do
   round=$((round+1))
-  # 第一优先：自动剔除设备配方中不可安装的缺失包（最多 3 轮）
   if [[ $round -le 3 ]] && prune_missing_device_packages "$out_dir/make-image.log"; then
     echo "=== 已剔除缺失设备包，重试组装（第 $round 轮）==="
     continue
   fi
-  # 无可剔除：转为逐包降级，定位用户插件失败项（仅一轮）
-  if [[ "$per_package_done" == 1 ]]; then
-    echo "❌ 镜像组装失败（已用尽自动容错）" >&2
-    exit 1
-  fi
-  per_package_done=1
-  echo "=== 批量安装失败，转为逐个插件安装以定位失败项 ==="
-  good_pkgs=""
-  for p in $packages; do
-    echo "--- 尝试安装: $p ---"
-    if run_make_image "$good_pkgs $p"; then
-      good_pkgs="$good_pkgs $p"
-    else
-      echo "    ⚠ 安装失败，已跳过: $p"
-      failed_pkgs+=("$p")
-    fi
-  done
-  echo "=== 用成功集合重组最终镜像 ==="
+  echo "❌ 镜像组装失败（错误见上方日志，不重试）" >&2
+  exit 1
 done
-
-if (("${#failed_pkgs[@]}")); then
-  printf '%s\n' "${failed_pkgs[@]}" > "$out_dir/failed-packages.txt"
-  echo "=== ⚠ 安装失败的插件（已跳过）: ${failed_pkgs[*]} ==="
-fi
 
 # WAN 出厂自检：确认最终 rootfs 里 WAN 配置可用（board.d 含 H28K 配置，或已带
 # 首启 WAN 兜底）。缺失时注入兜底脚本并重新打包一次，仍缺失则中止发布，杜绝

@@ -28,8 +28,8 @@ github_output="${4:-}"
 load_firmware_config "$conf"
 
 force="${FORCE:-false}"
-patch_hash="$(find "$patches_dir" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
-echo "补丁指纹：$patch_hash"
+patch_hash="{ find "$patches_dir" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$(dirname "$conf")/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1"
+echo "构建指纹（patches + 设备配置）：$patch_hash"
 
 DL_BASE="https://downloads.immortalwrt.org"
 
@@ -88,7 +88,11 @@ for v in "${versions[@]}"; do
 
   body="$(gh api "repos/{owner}/{repo}/releases/tags/$base_tag" --jq '.body' 2>/dev/null)" || body=""
   recorded_rev="$(body_field "$body" '上游版本' 'r[0-9]+-[0-9a-f]{6,40}')"
-  recorded_hash="$(body_field "$body" '补丁指纹' '[0-9a-f]{64}')"
+  recorded_hash="$(body_field "$body" '构建指纹' '[0-9a-f]{64}')"
+  if [[ -z "$recorded_hash" ]]; then
+    # 旧正文键名为 补丁指纹（仅 patches 指纹），与新指纹必然不同 → 触发重建
+    recorded_hash="$(body_field "$body" '补丁指纹' '[0-9a-f]{64}')"
+  fi
 
   if [[ "$(version_kind "$v")" == "release" ]]; then
     echo "$v：正式版官方源不可变，底包已存在 → 跳过"
@@ -97,7 +101,7 @@ for v in "${versions[@]}"; do
   fi
 
   if [[ -n "$recorded_hash" && "$recorded_hash" != "$patch_hash" ]]; then
-    echo "$v：补丁指纹已变化（${recorded_hash:0:12}… → ${patch_hash:0:12}…）→ 重建"
+    echo "$v：构建指纹已变化（${recorded_hash:0:12}… → ${patch_hash:0:12}…）→ 重建"
     keep+=("$v")
     continue
   fi

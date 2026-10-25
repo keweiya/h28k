@@ -27,7 +27,7 @@ on:
         required: false
         default: 'password'
       profile:
-        description: '设备 profile（留空 = 读 config/hinlink-h28k.config 的 PROFILE）'
+        description: '设备名称'
         type: string
         required: false
         default: ''

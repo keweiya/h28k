@@ -103,15 +103,29 @@ jobs:
       - name: 检出支持仓库
         uses: actions/checkout@v4
 
-      - name: 选择基础 Release
+      - name: 选择 ImageBuilder（H28K 用自建；其他设备用官方）
         id: base
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
-            "${{ matrix.version }}" \
-            "$GITHUB_OUTPUT" \
-            "true"
+          # H28K：自建 IB（含 H28K U-Boot/板级配置，官方没有）
+          if [[ -z "${{ inputs.profile }}" || "${{ inputs.profile }}" == "hinlink_h28k" ]]; then
+            bash "$GITHUB_WORKSPACE/scripts/select_ib.sh" \
+              "${{ matrix.version }}" \
+              "$GITHUB_OUTPUT" \
+              "true"
+            exit 0
+          fi
+          # 其他设备：官方 ImageBuilder（官方源天然支持全部官方设备）
+          case "${{ matrix.version }}" in
+            master) base="https://downloads.immortalwrt.org/snapshots" ;;
+            *)      base="https://downloads.immortalwrt.org/releases/${{ matrix.version }}" ;;
+          esac
+          {
+            echo "url=$base/targets/rockchip/armv8/immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64.tar.zst"
+            echo "rel_suffix=${{ matrix.version }}"
+          } >> "$GITHUB_OUTPUT"
+          echo "=== 设备 ${{ inputs.profile }}：使用官方 ImageBuilder ==="
 
       - name: 下载 ImageBuilder
         run: |
@@ -233,7 +247,7 @@ jobs:
           path: release_files/*
           retention-days: 30
 
-      - name: 发布 Release（唯一 Custom Release）
+      - name: 发布 Release（按设备命名，H28K/其他设备各自独立）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PROFILE: ${{ inputs.profile }}
@@ -252,13 +266,18 @@ jobs:
           else
             PASS_LINE='- **默认密码**：（已自定义，与构建输入一致，不在此显示）'
           fi
+          if [[ "$PROFILE" == "hinlink_h28k" ]]; then
+            DEVICE_LINE='- **设备型号**：HINLINK H28K (RK3528)'
+          else
+            DEVICE_LINE="- **设备 profile**：$PROFILE"
+          fi
           NOTES="## ImmortalWrt $DEV_NAME 定制固件 $V
 
-          - **构建类型**：ImageBuilder 组装（开箱即用定制版）
+          - **构建类型**：ImageBuilder 组装（开箱即用定制版；其他设备使用官方 ImageBuilder）
           - **组装时间**：$BUILD_TIME
           - **基于底包**：ImmortalWrt ${{ matrix.version }}
           - **设备 profile**：${{ inputs.profile }}（H28K = hinlink_h28k）
-          - **设备型号**：HINLINK H28K (RK3528)
+          $DEVICE_LINE
           - **管理地址**：\`${{ inputs.lan_ip }}\`
           $PASS_LINE
           ${{ env.PLUGIN_LINE }}

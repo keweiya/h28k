@@ -93,7 +93,7 @@
 
   注意：官方 armv8.mk 不含 H28K——`Device/hinlink_h28k` 由本仓库补丁（`patches/0030-board-support-*`）添加。官方源里有 RK3528 的 SoC 级支持（25.12/master 起），H28K 板级支持可考虑整理 PR 提交上游，合入后官方 IB 原生支持 H28K。
 
-- **用快速组装 workflow 或周更 workflow**：输入框都有「设备名称」，**留空 = 读 `config/hinlink-h28k.config` 顶部的 `PROFILE=` 行**（当前 `hinlink_h28k`）。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用；其他设备建议用官方 IB（自建 IB 未构建其他设备的 U-Boot 与设备专用包，组装它们会缺包失败）。
+- **用快速组装 workflow 构建其他设备**：输入框填「设备名称」（如 `friendlyarm_nanopi-r5s`）+ 选版本，workflow 会**自动改用官方 ImageBuilder** 组装并发布独立 Release（tag = `immortalwrt-<设备>-custom-<版本>`，资产名携带设备）。留空或填 `hinlink_h28k` 则走自建 IB 出 H28K 定制固件。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用；其他设备使用官方 base-files 板级配置，不受影响。周更 workflow 的「设备名称」留空时读同一配置行，滚动版本同理。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 

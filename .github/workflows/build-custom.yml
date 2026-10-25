@@ -116,16 +116,28 @@ jobs:
               "true"
             exit 0
           fi
-          # 其他设备：官方 ImageBuilder（官方源天然支持全部官方设备）
+          # 其他设备：官方 ImageBuilder（官方源天然支持全部官方设备）。
+          # 官方 IB 文件名：master 不带版本，正式版/分支快照带版本号前缀
           case "${{ matrix.version }}" in
-            master) base="https://downloads.immortalwrt.org/snapshots" ;;
-            *)      base="https://downloads.immortalwrt.org/releases/${{ matrix.version }}" ;;
+            master)
+              base="https://downloads.immortalwrt.org/snapshots"
+              ib="immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64.tar.zst"
+              ;;
+            *)
+              base="https://downloads.immortalwrt.org/releases/${{ matrix.version }}"
+              ib="immortalwrt-imagebuilder-${{ matrix.version }}-rockchip-armv8.Linux-x86_64.tar.zst"
+              ;;
+          esac
+          # Release 后缀与 select_ib.sh 一致：正式版带 v 前缀，滚动版本原样
+          case "${{ matrix.version }}" in
+            master|*-SNAPSHOT) rel="${{ matrix.version }}" ;;
+            *)                 rel="v${{ matrix.version }}" ;;
           esac
           {
-            echo "url=$base/targets/rockchip/armv8/immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64.tar.zst"
-            echo "rel_suffix=${{ matrix.version }}"
+            echo "url=$base/targets/rockchip/armv8/$ib"
+            echo "rel_suffix=$rel"
           } >> "$GITHUB_OUTPUT"
-          echo "=== 设备 ${{ inputs.profile }}：使用官方 ImageBuilder ==="
+          echo "=== 设备 ${{ inputs.profile }}：使用官方 ImageBuilder（$ib）==="
 
       - name: 下载 ImageBuilder
         run: |

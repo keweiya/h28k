@@ -32,7 +32,7 @@ on:
         description: '设备名称'
         type: string
         required: false
-        default: 'hinlink_h28k'
+        default: ''
       rootfs_size:
         description: '固件根目录大小'
         type: choice

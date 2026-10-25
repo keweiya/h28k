@@ -347,7 +347,6 @@ find_failed_plugins() {
 #      那样每个插件各跑一遍完整组装。
 good_pkgs="$packages"
 round=0
-skip_round=0
 : > "$out_dir/failed-packages.txt"
 until run_make_image "$good_pkgs"; do
   round=$((round+1))
@@ -355,23 +354,23 @@ until run_make_image "$good_pkgs"; do
     echo "=== 已剔除缺失设备包，重试组装（第 $round 轮）==="
     continue
   fi
-  if [[ $skip_round -le 2 ]]; then
-    failed_list="$(find_failed_plugins "$out_dir/make-image.log")"
-    skipped_now=''
-    for p in $packages; do
-      [[ -n "$p" ]] || continue
-      if grep -qE "^$p" <<< "$failed_list"; then
-        skipped_now="$skipped_now $p"
-        good_pkgs="$(printf '%s\n' $good_pkgs | grep -vxF "$p" | tr '\n' ' ')"
-        echo "    ⚠ 安装失败，已跳过: $p"
-      fi
-    done
-    if [[ -n "${skipped_now// /}" ]]; then
-      skip_round=$((skip_round+1))
-      printf '%s\n' $skipped_now >> "$out_dir/failed-packages.txt"
-      echo "=== 已跳过安装失败的插件，重试组装（第 $skip_round 轮）==="
-      continue
+  # 跳过不设轮数上限：跳过不影响构建产物，每轮至少移除一个失败插件
+  # （列表有限，必然收敛）；仅当一轮内识别不出任何可跳过插件（全局错误、
+  # 基础包缺依赖）才中止
+  failed_list="$(find_failed_plugins "$out_dir/make-image.log")"
+  skipped_now=''
+  for p in $packages; do
+    [[ -n "$p" ]] || continue
+    if grep -qE "^$p" <<< "$failed_list"; then
+      skipped_now="$skipped_now $p"
+      good_pkgs="$(printf '%s\n' $good_pkgs | grep -vxF "$p" | tr '\n' ' ')"
+      echo "    ⚠ 安装失败，已跳过: $p"
     fi
+  done
+  if [[ -n "${skipped_now// /}" ]]; then
+    printf '%s\n' $skipped_now >> "$out_dir/failed-packages.txt"
+    echo "=== 已跳过安装失败的插件，重试组装 ==="
+    continue
   fi
   echo "❌ 镜像组装失败（错误见上方日志，无可跳过项，不重试）" >&2
   exit 1

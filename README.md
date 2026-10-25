@@ -93,7 +93,7 @@
 
   注意：官方 armv8.mk 不含 H28K——`Device/hinlink_h28k` 由本仓库补丁（`patches/0030-board-support-*`）添加，其他设备以官方文件为准。
 
-- **用快速组装 workflow**：输入框新增「设备 profile」（默认 `hinlink_h28k`）——填其他设备的 profile 即可出该设备的定制固件，资产名会携带 profile。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用，其他设备直接使用官方板级配置，不受影响。
+- **用快速组装 workflow 或周更 workflow**：输入框都有「设备 profile」，**留空 = 读 `config/hinlink-h28k.config` 顶部的 `PROFILE=` 行**（当前 `hinlink_h28k`），填其他设备的 profile 即可出该设备的定制固件，资产名会携带 profile。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用，其他设备直接使用官方板级配置，不受影响。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
 

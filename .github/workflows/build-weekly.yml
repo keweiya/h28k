@@ -26,6 +26,11 @@ on:
         type: string
         required: false
         default: 'password'
+      profile:
+        description: '设备 profile（留空 = 读 config/hinlink-h28k.config 的 PROFILE）'
+        type: string
+        required: false
+        default: ''
       rootfs_size:
         description: '固件根目录大小'
         type: choice
@@ -185,7 +190,8 @@ jobs:
         run: |
           bash "$GITHUB_WORKSPACE/scripts/apply_patches.sh" \
             . "$GITHUB_WORKSPACE/patches" "${{ steps.release.outputs.patch_series }}" \
-            "${{ steps.release.outputs.version }}"
+            "${{ steps.release.outputs.version }}" \
+            "${{ inputs.profile }}"
 
       - name: 使用官方 feeds
         working-directory: source
@@ -321,6 +327,10 @@ jobs:
         run: |
           mkdir -p release_files
           rel="${{ steps.release.outputs.rel_suffix }}"
+          # 资产名携带设备：H28K 沿用 h28k，其他设备用配置种子里的 PROFILE
+          DEV='h28k'
+          CONF_PROFILE="$(sed -nE 's/^PROFILE=([^[:space:]]+).*/\1/p' "$GITHUB_WORKSPACE/config/hinlink-h28k.config" | head -n1)"
+          [[ -n "$CONF_PROFILE" && "$CONF_PROFILE" != "hinlink_h28k" ]] && DEV="$CONF_PROFILE"
           TARGET_DIR="source/bin/targets/rockchip/armv8"
           shopt -s nullglob
 

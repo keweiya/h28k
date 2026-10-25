@@ -15,11 +15,19 @@ config_file="${2:-}"
 packages_list="${3:-}"
 out_dir="${4:-}"
 ib_version="${5:-}"
-profile="${6:-hinlink_h28k}"
+profile="${6:-}"
 [[ -n "$ib_tarball" && -n "$config_file" && -n "$packages_list" && -n "$out_dir" ]] ||
   fail "usage: $0 <ib-tarball> <firmware.conf> <ib-packages.list> <out-dir> <ib-version> [profile]"
 [[ -f "$ib_tarball" ]] || fail "ImageBuilder tarball not found: $ib_tarball"
 [[ -f "$packages_list" ]] || fail "package list not found: $packages_list"
+
+# 设备 profile：工作流输入留空时，读设备配置种子里的 PROFILE= 行，仍未配置
+# 则回退 H28K
+if [[ -z "$profile" ]]; then
+  profile="$(sed -nE 's/^PROFILE=([^[:space:]]+).*/\1/p' \
+    "$(dirname "$config_file")/hinlink-h28k.config" 2>/dev/null | head -n1)"
+  [[ -n "$profile" ]] || profile="hinlink_h28k"
+fi
 [[ "$profile" =~ ^[a-z0-9._-]+$ ]] ||
   fail "invalid profile: $profile（仅小写字母/数字/点/下划线/连字符；名称用 make info 查询）"
 

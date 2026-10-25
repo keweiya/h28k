@@ -324,21 +324,64 @@ prune_missing_device_packages() {
   [[ $pruned -gt 0 ]]
 }
 
-# 组装：批量安装一次。失败时先尝试自动剔除设备配方中不可安装的缺失包后
-# 重试一轮（这是修复而非重试，曾真实修复 24.10.1/2/3 与 master 的缺包）；
-# 再失败即中止——同一错误反复重试没有意义（如设备 U-Boot 缺失时逐包重试
-# 全部撞同一错误）
+# 从 make image 日志解析"安装失败的可跳过项"（仅限用户插件层面的失败；
+# 基础包缺依赖属于全局错误，调用方负责与用户插件列表取交集）：
+#   opkg: "Collected errors: * opkg_install_cmd: Cannot install package xxx"
+#   opkg: "Unknown package 'xxx'"
+#   apk:  "xxx (no such package):" / "required by: xxx-<版本>"（依赖方）
+find_failed_plugins() {
+  local log="$1"
+  {
+    grep -oE "Cannot install package [a-zA-Z0-9+._-]+" "$log" 2>/dev/null | awk '{print $4}'
+    grep -oE "Unknown package '[^']+'" "$log" 2>/dev/null | sed -E "s/.*'([^']+)'.*/\1/"
+    grep -oE "required by: [a-zA-Z0-9+._~-]+" "$log" 2>/dev/null | awk '{print $3}'
+  } || true
+}
+
+# 组装：批量安装一次。失败时按两步自动修复，每步修复后重试一次，仍失败即
+# 中止（同一错误反复重试没有意义）：
+#   1) 设备配方引用的包缺失 → 从配方剔除后重试（曾真实修复 24.10.1/2/3
+#      与 master 的缺包）；
+#   2) 用户插件安装失败 → 从日志识别出失败插件并跳过后重试——跳过是
+#      "改输入"而非盲目重试，坏插件不会拖死其他插件，也不会像逐包降级
+#      那样每个插件各跑一遍完整组装。
 good_pkgs="$packages"
 round=0
+skip_round=0
+: > "$out_dir/failed-packages.txt"
 until run_make_image "$good_pkgs"; do
   round=$((round+1))
   if [[ $round -le 3 ]] && prune_missing_device_packages "$out_dir/make-image.log"; then
     echo "=== 已剔除缺失设备包，重试组装（第 $round 轮）==="
     continue
   fi
-  echo "❌ 镜像组装失败（错误见上方日志，不重试）" >&2
+  if [[ $skip_round -le 2 ]]; then
+    failed_list="$(find_failed_plugins "$out_dir/make-image.log")"
+    skipped_now=''
+    for p in $packages; do
+      [[ -n "$p" ]] || continue
+      if grep -qE "^$p" <<< "$failed_list"; then
+        skipped_now="$skipped_now $p"
+        good_pkgs="$(printf '%s\n' $good_pkgs | grep -vxF "$p" | tr '\n' ' ')"
+        echo "    ⚠ 安装失败，已跳过: $p"
+      fi
+    done
+    if [[ -n "${skipped_now// /}" ]]; then
+      skip_round=$((skip_round+1))
+      printf '%s\n' $skipped_now >> "$out_dir/failed-packages.txt"
+      echo "=== 已跳过安装失败的插件，重试组装（第 $skip_round 轮）==="
+      continue
+    fi
+  fi
+  echo "❌ 镜像组装失败（错误见上方日志，无可跳过项，不重试）" >&2
   exit 1
 done
+skipped_total="$(grep -c . "$out_dir/failed-packages.txt" 2>/dev/null || echo 0)"
+if [[ "${skipped_total// /}" -gt 0 ]]; then
+  echo "=== ⚠ 以下插件安装失败已跳过（共 $skipped_total 个）==="
+  cat "$out_dir/failed-packages.txt"
+fi
+
 
 # WAN 出厂自检：确认最终 rootfs 里 WAN 配置可用（board.d 含 H28K 配置，或已带
 # 首启 WAN 兜底）。缺失时注入兜底脚本并重新打包一次，仍缺失则中止发布，杜绝

@@ -352,7 +352,7 @@ jobs:
           TAG="immortalwrt-h28k-base-$V"
           TITLE="ImmortalWrt H28K 基础固件 $V"
           # 补丁指纹写入正文，供下次全量构建的跳过校验比对（补丁变了即重建）
-          PATCH_HASH="{ find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$GITHUB_WORKSPACE/config/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1"
+          PATCH_HASH="$( { find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$GITHUB_WORKSPACE/config/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1 )"
           NOTES="## ImmortalWrt H28K 基础固件 $V
 
           - **构建类型**：源码完整编译（纯净基础版）

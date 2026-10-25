@@ -412,7 +412,7 @@ jobs:
             PLUGIN_STATUS='- ✅ 定制固件全部插件安装成功'
           fi
           # 补丁指纹写入正文，供更新校验比对（补丁变了即重建）
-          PATCH_HASH="{ find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$GITHUB_WORKSPACE/config/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1"
+          PATCH_HASH="$( { find "$GITHUB_WORKSPACE/patches" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$GITHUB_WORKSPACE/config/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1 )"
 
           # ---- base Release：已由全量构建创建，覆盖同名资产并同步正文（上游
           # 版本/补丁指纹随周更刷新，供下次更新校验比对）----

@@ -28,7 +28,7 @@ github_output="${4:-}"
 load_firmware_config "$conf"
 
 force="${FORCE:-false}"
-patch_hash="{ find "$patches_dir" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$(dirname "$conf")/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1"
+patch_hash="$({ find "$patches_dir" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum; sha256sum "$(dirname "$conf")/hinlink-h28k.config"; } | sha256sum | cut -d' ' -f1)"
 echo "构建指纹（patches + 设备配置）：$patch_hash"
 
 DL_BASE="https://downloads.immortalwrt.org"

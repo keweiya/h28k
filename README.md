@@ -82,6 +82,17 @@
 
   profile 名即 `armv8.mk` 里 `DEVICE_xxx` 的下划线形式，以 `make info` 输出为准。非 H28K 设备组装时安装的是官方 base-files，其板级配置本就包含官方全部设备，无需任何注入。
 
+- **官方 armv8.mk 在线查询**（`define Device/<profile>` 的名字就是 PROFILE 值）：
+
+  | 构建的版本 | 链接 |
+  |---|---|
+  | 正式版 X.Y.Z | `https://github.com/immortalwrt/immortalwrt/blob/v<版本>/target/linux/rockchip/image/armv8.mk`（如 [v25.12.1](https://github.com/immortalwrt/immortalwrt/blob/v25.12.1/target/linux/rockchip/image/armv8.mk)） |
+  | 25.12-SNAPSHOT | [openwrt-25.12 分支](https://github.com/immortalwrt/immortalwrt/blob/openwrt-25.12/target/linux/rockchip/image/armv8.mk) |
+  | 24.10-SNAPSHOT | [openwrt-24.10 分支](https://github.com/immortalwrt/immortalwrt/blob/openwrt-24.10/target/linux/rockchip/image/armv8.mk) |
+  | master | [master 分支](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/rockchip/image/armv8.mk) |
+
+  注意：官方 armv8.mk 不含 H28K——`Device/hinlink_h28k` 由本仓库补丁（`patches/0030-board-support-*`）添加，其他设备以官方文件为准。
+
 - **用快速组装 workflow**：输入框新增「设备 profile」（默认 `hinlink_h28k`）——填其他设备的 profile 即可出该设备的定制固件，资产名会携带 profile。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用，其他设备直接使用官方板级配置，不受影响。
 
 （各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）

@@ -1,151 +1,65 @@
-# H28K OpenWrt 固件构建仓库
+# H28K ImmortalWrt 固件构建仓库
 
-本仓库自动编译 HINLINK H28K（Rockchip RK3528）的 ImmortalWrt 固件，**与官方 release 的内核 ABI 完全一致**：官方软件源里的插件（包括带 kmod 依赖的插件）可以直接安装，不会出现 vermagic 报错。
+自动构建 HINLINK H28K（Rockchip RK3528）的 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 固件。产物与官方 release 内核 **ABI 完全一致**，官方源插件（含 kmod 依赖）直接安装无 vermagic 报错。
 
-仓库只保存编译配置、构建脚本和板级补丁，不包含 ImmortalWrt 上游源码。
+仓库只保存配置、脚本与板级补丁，不含上游源码。仅供个人使用。
 
-> 仅供个人使用和配置留档，请自行确认硬件适配性。
+## 快速开始
 
-> **分支说明**：全部能力（全版本支持 / 滚动快照 / 补丁体系）已合并进 `master` 分支并直接在 master 上维护；原 `adapt` 开发分支不再使用。
+| 工作流 | 用途 | 产物 Release |
+|---|---|---|
+| **固件快速组装** | 日常用固件（预装 `config/ib-packages.list` 插件，约 5 分钟） | `*-custom-<版本>` |
+| 固件全量构建 | 底包（源码编译，1.5~3 小时，改动补丁/配置后跑） | `*-base-<版本>` |
+| 固件周更（周四 02:00） | 滚动版本（master + 双 SNAPSHOT）自动刷新 | 原地覆盖 base/custom |
+
+- 日常使用下载 **custom** 固件；首启默认（LAN IP/密码/WAN 模式/Wi-Fi/中文）在 `config/firmware.conf` 配置。
+- **更新校验自动跳过**：上游未推进且补丁/配置未变的版本不重编（Release 正文记录 revision 与构建指纹）；勾选 `force` 强制重建。
+- 组装容错：设备配方缺包自动剔除；安装失败的插件自动跳过并在 Release 总结标注；无法修复的错误立即失败报真因。
+- H28K 定制固件带出厂自检：base-files 被官方包覆盖时自动恢复 H28K 板级配置（WAN/LED），WAN 配置缺失则注入兜底，仍失败不出包。
 
 ## 支持版本
 
-| ImmortalWrt 版本形态 | 补丁目录 | 内容 | 已实测版本 |
-| --- | --- | --- | --- |
-| 24.10.x（X.Y.Z 与 24.10-SNAPSHOT） | `patches/`（`-v24.10` 后缀） | bootloader（ATF rkbin + U-Boot 2025.10）+ RK3528 内核回移 + H28K 板级支持，共 3 个系列补丁；24.10.1/2/3 另有 `0050` 版本级补丁回填 adc-keys kmod | 24.10.1 ~ 24.10.6 与 openwrt-24.10 分支 HEAD（补丁应用层面全部验证） |
-| 25.12.x（X.Y.Z 与 25.12-SNAPSHOT）与 master | `patches/`（`-v25.12` 后缀；master 沿用并叠加 `-vmaster` 专属补丁） | U-Boot + H28K 板级支持，共 2 个系列补丁；master 另有 `0040` 专属补丁恢复 SARADC kmod 定义 | 25.12.0, 25.12.1, openwrt-25.12 分支 HEAD 与当前官方快照 revision |
+24.10.1 ~ 24.10.6、25.12.0 ~ 25.12.2 正式版，24.10-SNAPSHOT / 25.12-SNAPSHOT 分支快照，master 快照。内核随官方（6.6 / 6.12 / 6.18.x）。`all` = `config/firmware.conf` 里的固定集合，新官方版本需先加选项并全量构建底包后再加入。
 
-- **三种版本形态**：
-  - `X.Y.Z`（如 `24.10.4`）：正式 release，源码锁 tag `vX.Y.Z`，官方产物目录不可变，ABI 校验最稳。
-  - `X.Y-SNAPSHOT`（如 `25.12-SNAPSHOT`）：`openwrt-X.Y` 分支的滚动快照，官方源 `releases/X.Y-SNAPSHOT/`，源码锁 `version.buildinfo` 里的 revision。
-  - `master`：master 分支滚动快照，官方源 `snapshots/`，源码锁当前已发布快照对应的 revision。
-- **滚动快照同样强制校验 ABI**：源码锁 revision（官方当前产物所编译的 commit）+ 配置合成一致，产物哈希与解析时刻的官方哈希比对；官方轮换后重跑即可。正式版保持全量 kmod（ALL_KMODS）与官方对齐。
-- **编译统一带 `IGNORE_ERRORS="n m"`**（官方 buildbot 同款，语义见 `package/Makefile`：忽略未选中包 n 与模块包 m 的编译失败，例如 telephony 的 rtpengine 遇上 6.18 内核）。与官方发布版（`n m y`）的差异：进固件的 =y 包失败仍然阻断，防止固件静默缺包。
-- **ccache 跨构建缓存**（官方 buildbot 同款机制）：`CONFIG_CCACHE=y` + `actions/cache` 持久化 `source/.ccache`（`CCACHE_MAXSIZE=2G`）。同版本重跑、失败重试、官方快照轮换后的重新构建都会命中编译缓存，工具链与内核部分提速最明显；缓存为纯编译加速，不影响 ABI。
-- 24.10.0 不支持：上游在 24.10.1 才引入 `phy-leds` 脚本（`0030` 板级补丁的前提）。
-- 系列内的任意版本都可以直接构建（如 `24.10.2`），无需登记白名单；`config/firmware.conf` 的 `supported_series` 控制开放哪些系列，补丁应用与编译后的 ABI 强校验兜底质量。
-- 工作流版本选 `all` 时在线枚举官方源的全部支持版本：各系列的已发布 X.Y.Z 与 X.Y-SNAPSHOT（排除 `excluded_versions`，如 24.10.0）加 master，官方新发布的点版本自动纳入、无需改配置；枚举失败时回退到 `supported_versions` 静态列表并告警。
-- 内核版本跟随官方对应版本（24.10 系为 6.6.x，25.12 系为 6.12.x，master 当前为 6.18.x，以官方实际发布为准）。
-- 补丁位于单层 `patches/` 目录，命名 `<序号>-<功能>-v<范围>.patch`：序号决定应用顺序，后缀决定适用范围——`-v<系列>`（如 `-v24.10`）适配该系列全部版本，`-v<精确版本>`（如 `-v24.10.1`）仅适配该点版本，`-vmaster` 仅适配 master（master 源码树沿用 25.12 系列补丁并叠加专属补丁）。无法识别的后缀直接报错，防止补丁被静默跳过。
-- **设备配方 kmod 的上游差量由补丁回填**：`kmod-input-adc-keys` 上游 v24.10.4 才加入 24.10 分支（24.10.1/2/3 由 `0050` 版本级补丁回填），`kmod-saradc-rockchip` 在 master 分支被上游删除（由 `0040` 补丁恢复）。回填后 base 构建自动产出并捆绑进 IB，组装阶段设备配方零剔除；新增符号从 vermagic 哈希排除以保持与官方 ABI 对齐（见下节）。对应版本的底包需在补丁合入后重建一次。
-- 每次构建强制校验 ABI，见下文"ABI 保证机制"。
+补丁在单层 `patches/`，命名 `<序号>-<功能>-v<范围>.patch`（`-v24.10` 整个系列、`-v24.10.1` 精确版本、`-vmaster` 仅 master）。24.10 系含 RK3528 内核回移；24.10.0 不支持（缺 phy-leds 脚本）。
 
-## ABI 保证机制
+## 构建其他 rockchip 设备
 
-（对三种版本形态全部生效。）
+其他官方 rockchip/armv8 设备用**官方 ImageBuilder**（官方 IB 天然支持全部官方设备）：
 
-1. 源码锁定官方版本：正式版锁 release tag；滚动快照锁官方已发布产物对应的 revision（`scripts/select_release.sh` 自动解析，并确认官方 kmods 目录存在）。
-2. feeds 用官方 `feeds.buildinfo` 锁定提交；内核配置用官方 `config.buildinfo` 中的内核选项合成（`scripts/prepare_kernel_config.sh`）。
-3. 24.10 系特例：计算 vermagic 时排除官方没有的差量符号——所有 24.10.x 排除 `CONFIG_CLK_RK3528=y`（H28K 补丁新增的时钟选项）；24.10.1/2/3 另排除 `CONFIG_KEYBOARD_ADC=m`（该 kmod 由 `0050` 补丁回填、官方这些版本未启用）。纯新增模块不改动核心内核代码，官方远程 kmod 仍可直接安装。
-4. 编译后强校验：构建出的 `.vermagic` 必须等于官方 kmods 目录哈希，不一致则构建直接失败。
-
-## 使用
-
-本仓库采用**两段式构建**（基础固件 / 定制固件分离，定制更新无需全量重编）：
-
-```
-阶段 1 · 全量源码构建（慢，1.5~3 小时，手动触发）
-  H28K 固件全量构建：全量编译 → check-abi 门禁
-  → 发布/覆盖更新 Base Release（tag = immortalwrt-h28k-base-v<版本>）：
-    基础固件 + rootfs.tar.gz + 自建 ImageBuilder
-
-阶段 2 · 固件快速组装（快，约 5 分钟，随时手动触发）
-  H28K 固件快速组装：下载自建 ImageBuilder
-  → 注入 IP/密码/软件包 → make image 组装 → ABI 与阶段 1 完全一致
-  → 发布/覆盖更新 Custom Release（tag = immortalwrt-h28k-custom-v<版本>）
-
-周更 · 定时编译（每周四凌晨 2:00 自动触发，也可手动选单个滚动版本）
-  H28K 周更固件：master + 24.10-SNAPSHOT + 25.12-SNAPSHOT 三路源码编译
-  → 基础固件 + 用 ImageBuilder 组装的定制固件（预装 ib-packages.list 插件）
-  → 同发布到一个 Release（tag = immortalwrt-h28k-<版本>，默认 2G 根目录）
-
-每个版本最多两个 Release（base / custom），重复构建原地覆盖更新，不会堆积。除周更（周四凌晨 2:00）为定时触发外，其余工作流均可手动触发。日常使用请下载带 -custom 标识的定制固件。
-```
-
-- **阶段 1**：Actions → 「H28K 固件全量构建」→ 版本填 `X.Y.Z` / `X.Y-SNAPSHOT` / `master` / `all`（默认集合并行编译，见 `config/firmware.conf` 的 `supported_versions`，默认 `master`）。版本解析、源码锁定与 ABI 校验全自动，系列内任意版本可直接构建。为什么用自建而不是官方 ImageBuilder：官方 ImageBuilder 没有 `hinlink_h28k` 设备（无 device 配方、无 H28K DTB/u-boot），且预编译内核无法打补丁，H28K 支持只能从源码编出。自建 IB 会补写 `repositories` 在线源清单并解除 standalone 门禁（官方 buildbot 产物自带、本地 `make imagebuilder` 不生成也不加载），IB 本地没有的包组装时从官方源在线拉取；设备专属 kmod 随构建捆绑进 IB，官方 kmods 仓库缺的包也能本地安装，源清单里失效的 kmods 目录会在组装前自动重解析。
-- **阶段 2**：Actions → 「H28K 固件快速组装」→ 选版本，改 `config/ib-packages.list` 即可换软件包组合；Release 总结里会列出当前启用的插件。**日常使用的固件来自这里**（基础固件不含第三方插件）。首启开机默认（WAN 拨号/旁路由、主机名、Wi-Fi、中文界面、时区 NTP）在 `config/firmware.conf` 设置，仅作用于定制固件，设备上可随时改；其中 WAN 拨号与旁路由也可在组装/周更工作流输入框临时填写（留空 = 用 conf 值，旁路由网关不能与 LAN 地址相同）。
-- **周更固件**：每周四凌晨 2:00 自动编译 master 与两个 SNAPSHOT 滚动版本，基础固件与定制固件（预装 `config/ib-packages.list` 启用的插件）发布在同一个 Release（tag `immortalwrt-h28k-<版本>`，如 `immortalwrt-h28k-master`），组装被跳过的插件会在 Release 总结里如实标注；也可手动触发并选择单个滚动版本。追新用周更，稳定用正式版。
-
-### 构建其他 rockchip 设备（用官方 ImageBuilder）
-
-自建 ImageBuilder 以 H28K 为中心（补丁只为 H28K 服务）；**其他官方 rockchip/armv8 设备直接用官方 ImageBuilder 构建**——官方 IB 天然支持全部官方设备，自带全部 U-Boot、设备专用包与在线源：
-
-- **手动用官方 IB**（任意 Linux 机器）：
+- **workflow**：「快速组装」填「设备名称」（如 `friendlyarm_nanopi-r5s`）即自动用官方 IB 组装，发布独立 Release `immortalwrt-<设备>-custom-<版本>`；留空默认 H28K（读 `config/hinlink-h28k.config` 的 `PROFILE=`）。建议选正式版——master/快照源轮换期间会因官方 feed 失配失败，过几小时重试即可。
+- **手动**（任意 Linux）：
 
   ```bash
-  # 从官方下载对应版本的 IB
-  curl -O https://downloads.immortalwrt.org/releases/<版本>/targets/rockchip/armv8/immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64.tar.zst
-  tar --zstd -xf immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64.tar.zst
-  cd immortalwrt-imagebuilder-rockchip-armv8.Linux-x86_64
-  make info                 # 列出全部设备 profile 与默认包
-  make image PROFILE=friendlyarm_nanopi-r5s ROOTFS_PARTSIZE=1024
-  make image PROFILE=lunzn_fastrhino-r66s PACKAGES="luci-app-openclash"
+  curl -O https://downloads.immortalwrt.org/releases/<版本>/targets/rockchip/armv8/immortalwrt-imagebuilder-<版本>-rockchip-armv8.Linux-x86_64.tar.zst
+  tar --zstd -xf immortalwrt-imagebuilder-*-Linux-x86_64.tar.zst && cd immortalwrt-imagebuilder-*
+  make info    # 全部设备 profile
+  make image PROFILE=friendlyarm_nanopi-r5s PACKAGES="luci-app-openclash"
   ```
 
-- **官方 armv8.mk 在线查询**（`define Device/<profile>` 的名字就是 PROFILE 值）：
+- PROFILE 名 = 官方 [armv8.mk](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/rockchip/image/armv8.mk) 里 `DEVICE_xxx` 的下划线形式（各版本/分支同路径替换 ref；官方文件不含 H28K——由本仓库 `0030` 补丁添加）。
 
-  | 构建的版本 | 链接 |
-  |---|---|
-  | 正式版 X.Y.Z | `https://github.com/immortalwrt/immortalwrt/blob/v<版本>/target/linux/rockchip/image/armv8.mk`（如 [v25.12.1](https://github.com/immortalwrt/immortalwrt/blob/v25.12.1/target/linux/rockchip/image/armv8.mk)） |
-  | 25.12-SNAPSHOT | [openwrt-25.12 分支](https://github.com/immortalwrt/immortalwrt/blob/openwrt-25.12/target/linux/rockchip/image/armv8.mk) |
-  | 24.10-SNAPSHOT | [openwrt-24.10 分支](https://github.com/immortalwrt/immortalwrt/blob/openwrt-24.10/target/linux/rockchip/image/armv8.mk) |
-  | master | [master 分支](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/rockchip/image/armv8.mk) |
+## ABI 保证
 
-  注意：官方 armv8.mk 不含 H28K——`Device/hinlink_h28k` 由本仓库补丁（`patches/0030-board-support-*`）添加。官方源里有 RK3528 的 SoC 级支持（25.12/master 起），H28K 板级支持可考虑整理 PR 提交上游，合入后官方 IB 原生支持 H28K。
-
-- **用快速组装 workflow 构建其他设备**：输入框填「设备名称」（如 `friendlyarm_nanopi-r5s`）+ 选版本，workflow 会**自动改用官方 ImageBuilder** 组装并发布独立 Release（tag = `immortalwrt-<设备>-custom-<版本>`，资产名携带设备）。留空或填 `hinlink_h28k` 则走自建 IB 出 H28K 定制固件。注意：WAN 板级注入、出厂自检与首启 WAN 兜底是 **H28K 专属**逻辑，仅在 profile 为 `hinlink_h28k` 时启用；其他设备使用官方 base-files 板级配置，不受影响。周更 workflow 的「设备名称」留空时读同一配置行，滚动版本同理。
-
-（各配置文件的用法见文件内注释；历史详细文档见 git 历史中的 documents/ 目录）
+源码锁官方 tag/revision，feeds 锁官方 `feeds.buildinfo`，内核配置合成自官方 `config.buildinfo`；编译后 `.vermagic` 必须等于官方 kmods 目录哈希，不一致构建失败。24.10 系对补丁新增符号（`CLK_RK3528` 等）做 vermagic 排除以对齐官方。
 
 ## 目录结构
 
 ```
-h28k-openwrt/
-├── README.md
 ├── config/
-│   ├── firmware.conf                # 初始化参数（开放系列、all 默认集合、LAN IP、密码、根目录大小、主题、ABI 开关、首启默认：WAN 拨号/旁路由/主机名/Wi-Fi/中文/时区）
-│   ├── ib-packages.list             # 阶段 2 追加安装的官方源包
-│   └── hinlink-h28k.config          # 目标与软件包选配种子（含 CONFIG_IB 产出自建 IB）
-├── patches/                         # 单层目录；命名 <序号>-<功能>-v<系列|精确版本|master>.patch
-│   ├── 0010-bootloader-v24.10.patch       # 24.10：ATF rkbin + 独立 U-Boot 2025.10
-│   ├── 0010-bootloader-v25.12.patch       # 25.12/master：uboot-rockchip 增加 H28K
-│   ├── 0020-kernel-backport-v24.10.patch  # 24.10：RK3528 内核回移
-│   ├── 0030-board-support-v24.10.patch    # 24.10：H28K 板级支持（DT/默认配置/镜像/LED）
-│   ├── 0030-board-support-v25.12.patch    # 25.12/master：H28K 板级支持
-│   ├── 0040-kmod-saradc-rockchip-vmaster.patch  # master 专属：恢复上游删除的 SARADC kmod 定义
-│   └── 0050-kmod-input-adc-keys-v24.10.1/2/3.patch  # 仅这三个点版本：回填上游 v24.10.4 才加入的 adc-keys kmod 定义
-├── scripts/
-│   ├── config.sh                    # 共享配置读取与校验（版本形态、参数覆盖）
-│   ├── resolve_versions.sh          # 版本选择 → 构建矩阵（all 在线枚举官方全部支持版本）
-│   ├── select_release.sh            # 版本解析：源码锁定（tag/revision）+ 补丁系列映射 + 官方 kmods 哈希
-│   ├── select_ib.sh                 # 选基础 Release（IB 附件）
-│   ├── ensure_ib_repositories.sh    # IB 在线源清单补写 + standalone 门禁解除 + kmods 源自愈
-│   ├── fetch_official_packages.sh   # 生成 ib-packages.list（在线枚举官方插件源包清单）
-│   ├── build_ib_image.sh            # 用自建 IB 组装定制固件（IP/密码/主题/包/根目录大小/缺包自动剔除）
-│   ├── apply_patches.sh             # 按系列/精确版本后缀过滤并按字典序应用补丁
-│   ├── prepare_kernel_config.sh     # 官方内核配置合成 + 根目录大小注入 + vermagic 差量符号排除
-│   └── build_config.sh              # 参数注入、官方 kmod 源启用、ABI 校验
-└── .github/workflows/
-    ├── build-weekly.yml             # 周更：周四 02:00 定时编译 master + 双快照（基础+定制 同 Release）
-    ├── build-base.yml               # 阶段 1：全量源码构建（单版本或 all 并行）→ Base Release
-    └── build-custom.yml             # 阶段 2：固件快速组装（分钟级）→ Custom Release
+│   ├── firmware.conf          # 首启默认与构建参数；supported_versions 固定集合
+│   ├── hinlink-h28k.config    # 构建种子（顶部 PROFILE= 为组装默认设备）
+│   └── ib-packages.list       # 定制固件预装插件清单
+├── patches/                   # 板级补丁（命名规则见上）
+├── scripts/                   # 构建/校验/组装脚本（用法见各文件头注释）
+└── .github/workflows/         # build-base / build-custom / build-weekly
 ```
-
-## 固件组件
-
-- **基础固件**（阶段 1 Release）：纯净官方组件（`kmod-mt7921u`、`wpad-openssl`、`openssh-sftp-server`），**不含第三方插件**
-- **默认定制固件**（阶段 2 产物）：在基础固件之上追加 `config/ib-packages.list` 启用的官方源包
 
 ## 设备信息
 
-- 型号：HINLINK H28K
-- SoC：Rockchip RK3528
-- 架构：ARMv8 / AArch64
-- LAN：`eth0`（板上 GMAC）
-- WAN：`eth1`（PCIe RTL8111HS）
-- 固件设备名：`hinlink_h28k`
+HINLINK H28K · RK3528 · aarch64 · LAN `eth0`（GMAC）/ WAN `eth1`（PCIe RTL8111HS）· 固件设备名 `hinlink_h28k`
 
-## 参考代码
+## 参考
 
 - [Ssrtvb/hinlink-h28k](https://github.com/Ssrtvb/hinlink-h28k)
 - [ophub/amlogic-s9xxx-openwrt](https://github.com/ophub/amlogic-s9xxx-openwrt)

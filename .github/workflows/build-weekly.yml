@@ -331,6 +331,7 @@ jobs:
           DEV='h28k'
           CONF_PROFILE="$(sed -nE 's/^PROFILE=([^[:space:]]+).*/\1/p' "$GITHUB_WORKSPACE/config/hinlink-h28k.config" | head -n1)"
           [[ -n "$CONF_PROFILE" && "$CONF_PROFILE" != "hinlink_h28k" ]] && DEV="$CONF_PROFILE"
+          echo "DEV=$DEV" >> "$GITHUB_ENV"
           TARGET_DIR="source/bin/targets/rockchip/armv8"
           shopt -s nullglob
 
@@ -446,8 +447,8 @@ jobs:
           fi
 
           # ---- custom Release：创建或覆盖 ----
-          CUSTOM_TAG="immortalwrt-h28k-custom-$REL"
-          CUSTOM_NOTES="## ImmortalWrt H28K 定制固件 $REL
+          CUSTOM_TAG="immortalwrt-$DEV-custom-$REL"
+          CUSTOM_NOTES="## ImmortalWrt $DEV 定制固件 $REL
 
           - **构建类型**：ImageBuilder 组装（开箱即用定制版，已预装 config/ib-packages.list 启用的插件）
           - **构建时间**：${{ env.BUILD_TIME }}
@@ -463,10 +464,10 @@ jobs:
 
           if gh release view "$CUSTOM_TAG" >/dev/null 2>&1; then
             gh release upload "$CUSTOM_TAG" "${CUSTOM_ASSETS[@]}" --clobber
-            gh release edit "$CUSTOM_TAG" --title "ImmortalWrt H28K 定制固件 $REL" --notes "$CUSTOM_NOTES"
+            gh release edit "$CUSTOM_TAG" --title "ImmortalWrt $DEV 定制固件 $REL" --notes "$CUSTOM_NOTES"
             echo "=== 已更新 $CUSTOM_TAG ==="
           else
-            gh release create "$CUSTOM_TAG" "${CUSTOM_ASSETS[@]}" --title "ImmortalWrt H28K 定制固件 $REL" --notes "$CUSTOM_NOTES" --latest=false
+            gh release create "$CUSTOM_TAG" "${CUSTOM_ASSETS[@]}" --title "ImmortalWrt $DEV 定制固件 $REL" --notes "$CUSTOM_NOTES" --latest=false
             echo "=== 已创建 $CUSTOM_TAG ==="
           fi
 

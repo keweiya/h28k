@@ -25,7 +25,9 @@
 
 ## 构建其他 rockchip 设备
 
-其他官方 rockchip/armv8 设备用**官方 ImageBuilder**（官方 IB 天然支持全部官方设备）：
+## 构建其他设备（官方 rockchip/armv8 全设备）
+
+除 H28K 外，**官方 rockchip/armv8 目标的全部设备均可构建**——RK3328/3399/3566/3568/3576/3588 的几十款官方支持板子（NanoPi R2S/R4S/R5S、FastRhino R66S/R68S、Radxa Rock/E 系列、EasePi R1、Orangepi R1 Plus 等），完整清单见 `make info` 或官方 armv8.mk。固件走官方 ImageBuilder（自带各设备 U-Boot、板级包与在线源）：
 
 - **workflow**：「快速组装」填「设备名称」（如 `friendlyarm_nanopi-r5s`）即自动用官方 IB 组装，发布独立 Release `immortalwrt-<设备>-custom-<版本>`；留空默认 H28K（读 `config/hinlink-h28k.config` 的 `PROFILE=`）。建议选正式版——master/快照源轮换期间会因官方 feed 失配失败，过几小时重试即可。
 - **手动**（任意 Linux）：
@@ -38,6 +40,7 @@
   ```
 
 - PROFILE 名 = 官方 [armv8.mk](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/rockchip/image/armv8.mk) 里 `DEVICE_xxx` 的下划线形式（各版本/分支同路径替换 ref；官方文件不含 H28K——由本仓库 `0030` 补丁添加）。
+- 范围说明：仅限 rockchip/armv8 目标。其他架构（x86、mediatek 等）是独立的 target 与 IB，不在本仓库工作流覆盖内；如有需要可在手动方案里把 URL 换成对应 target 的官方 IB。
 
 ## ABI 保证
 
